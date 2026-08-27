@@ -2,12 +2,17 @@ name: News Automation Pipeline
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/30 * * * * # Runs every 30 minutes
+ 
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository Code
         uses: actions/checkout@v4
