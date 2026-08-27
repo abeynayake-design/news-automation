@@ -2,12 +2,13 @@ name: News Automation Pipeline
 
 on:
   schedule:
-    - cron: '*/30 * * * * # Runs every 30 minutes
- 
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
+
+
 
 jobs:
   run-pipeline:
