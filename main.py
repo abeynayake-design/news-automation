@@ -30,7 +30,7 @@ def resolve_google_url(google_url):
     try:
         session = requests.Session()
         session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
         res = session.get(google_url, allow_redirects=True, timeout=8)
         return res.url
@@ -48,11 +48,10 @@ def extract_article_content(url):
     return None
 
 def rewrite_with_gemini(raw_text, original_title):
-    # .strip() guarantees no hidden spaces break the call
     client = genai.Client(api_key=GEMINI_API_KEY.strip())
     
     prompt = f"""
-    You are an expert news editor. Rewrite the following raw news article into a clear, professional, engaging article.
+    You are an expert news editor. Rewrite the following raw news article/summary into a clear, professional, engaging news article.
     
     Formatting rules:
     - Return ONLY a raw JSON object. Do not include markdown tags like ```json.
@@ -116,12 +115,15 @@ def run_pipeline():
         print(f"\nProcessing: {entry.title}")
         target_url = resolve_google_url(raw_url)
         
+        # Try full page extraction
         raw_text = extract_article_content(target_url)
-        if not raw_text or len(raw_text) < 150:
-            print("Skipping: Insufficient text.")
-            save_to_history(raw_url)
-            continue
-            
+        
+        # Fallback to RSS summary or title if scraping fails or returns short text
+        if not raw_text or len(raw_text) < 100:
+            summary = getattr(entry, 'summary', '')
+            raw_text = f"{entry.title}. {summary}"
+            print("Using RSS summary fallback.")
+
         try:
             article_data = rewrite_with_gemini(raw_text, entry.title)
         except Exception as e:
