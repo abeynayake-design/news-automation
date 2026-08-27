@@ -32,7 +32,7 @@ def resolve_google_url(google_url):
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
-        res = session.get(google_url, allow_redirects=True, timeout=8)
+        res = session.get(google_url, allow_redirects=True, timeout=5)
         return res.url
     except Exception as e:
         print(f"URL resolve fallback used: {e}")
@@ -40,7 +40,8 @@ def resolve_google_url(google_url):
 
 def extract_article_content(url):
     try:
-        downloaded = trafilatura.fetch_url(url)
+        # Enforce 5-second maximum timeout to avoid hanging
+        downloaded = trafilatura.fetch_url(url, timeout=5)
         if downloaded:
             return trafilatura.extract(downloaded)
     except Exception as e:
@@ -107,7 +108,12 @@ def run_pipeline():
     
     print(f"Found {len(feed.entries)} items in feed.")
     
+    processed_count = 0
     for entry in feed.entries:
+        if processed_count >= 3:
+            print("Batch limit of 3 reached. Ending run.")
+            break
+
         raw_url = entry.link
         if raw_url in history:
             continue
@@ -115,10 +121,8 @@ def run_pipeline():
         print(f"\nProcessing: {entry.title}")
         target_url = resolve_google_url(raw_url)
         
-        # Try full page extraction
         raw_text = extract_article_content(target_url)
         
-        # Fallback to RSS summary or title if scraping fails or returns short text
         if not raw_text or len(raw_text) < 100:
             summary = getattr(entry, 'summary', '')
             raw_text = f"{entry.title}. {summary}"
@@ -135,6 +139,8 @@ def run_pipeline():
             save_to_history(raw_url)
             print("Successfully published article!")
             break 
+            
+        processed_count += 1
 
 if __name__ == "__main__":
     run_pipeline()
