@@ -41,7 +41,7 @@ def resolve_google_url(google_url):
 def extract_article_content(url):
     try:
         # Enforce 5-second maximum timeout to avoid hanging
-        downloaded = trafilatura.fetch_url(url, timeout=5)
+        downloaded = trafilatura.fetch_url(url)
         if downloaded:
             return trafilatura.extract(downloaded)
     except Exception as e:
