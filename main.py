@@ -48,6 +48,59 @@ def extract_article_content(url):
         print(f"Extraction error: {e}")
     return None
 
+def get_pexels_image_url(search_query):
+    if not PEXELS_API_KEY:
+        print("Missing PEXELS_API_KEY secret. Skipping Pexels image lookup.")
+        return None
+
+    try:
+        headers = {"Authorization": PEXELS_API_KEY}
+        url = f"https://api.pexels.com/v1/search?query={search_query}&per_page=1&orientation=landscape"
+        res = requests.get(url, headers=headers, timeout=10)
+        
+        if res.status_code == 200:
+            data = res.json()
+            photos = data.get("photos", [])
+            if photos:
+                image_url = photos[0]["src"]["large"]
+                print(f"Pexels image found for '{search_query}': {image_url}")
+                return image_url
+            else:
+                print(f"No Pexels photos found for query: '{search_query}'")
+        else:
+            print(f"Pexels API error. Status: {res.status_code}, Response: {res.text}")
+    except Exception as e:
+        print(f"Pexels fetch error: {e}")
+    return None
+
+def upload_image_to_wordpress(image_url):
+    try:
+        img_res = requests.get(image_url, timeout=10)
+        if img_res.status_code == 200:
+            filename = f"pexels_{image_url.split('/')[-1].split('?')[0]}.jpg"
+            
+            credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
+            token = base64.b64encode(credentials.encode()).decode("utf-8")
+            
+            media_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
+            media_headers = {
+                "Authorization": f"Basic {token}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": img_res.headers.get("Content-Type", "image/jpeg")
+            }
+            
+            upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
+            if upload_res.status_code in [200, 201]:
+                media_id = upload_res.json().get("id")
+                print(f"Uploaded photo to WP Media Library. Media ID: {media_id}")
+                return media_id
+            else:
+                print(f"Failed to upload image. Status: {upload_res.status_code}, Response: {upload_res.text}")
+    except Exception as e:
+        print(f"Image upload exception: {e}")
+    return None
+
 def rewrite_with_gemini(raw_text, original_title):
     client = genai.Client(api_key=GEMINI_API_KEY.strip())
     
@@ -59,6 +112,7 @@ def rewrite_with_gemini(raw_text, original_title):
     - Fields required:
       "title": "A compelling headline"
       "content": "<p>Introductory paragraph...</p><h2>Key Highlights</h2><ul><li>Point 1</li><li>Point 2</li></ul><p>Detailed body content...</p>"
+      "image_query": "2 to 3 concise English keywords for stock photo search (e.g., 'tea estate', 'passenger plane', 'cricket match')"
 
     Original Title: {original_title}
     Raw Text:
@@ -78,7 +132,7 @@ def rewrite_with_gemini(raw_text, original_title):
         
     return json.loads(response_text)
 
-def post_to_wordpress(title, content_html):
+def post_to_wordpress(title, content_html, featured_media_id=None):
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -94,6 +148,9 @@ def post_to_wordpress(title, content_html):
         "content": content_html,
         "status": "publish"
     }
+    
+    if featured_media_id:
+        body["featured_media"] = featured_media_id
     
     res = requests.post(api_endpoint, headers=headers, json=body, timeout=10)
     if res.status_code in [200, 201]:
@@ -135,10 +192,18 @@ def run_pipeline():
             print(f"Gemini processing error: {e}")
             continue
             
-        success = post_to_wordpress(article_data["title"], article_data["content"])
+        # Pexels photo lookup & WordPress media upload
+        image_query = article_data.get("image_query", "sri lanka news")
+        image_url = get_pexels_image_url(image_query)
+        
+        media_id = None
+        if image_url:
+            media_id = upload_image_to_wordpress(image_url)
+            
+        success = post_to_wordpress(article_data["title"], article_data["content"], featured_media_id=media_id)
         if success:
             save_to_history(raw_url)
-            print("Successfully published article!")
+            print("Successfully published article with Pexels photo!")
             break 
             
         processed_count += 1
