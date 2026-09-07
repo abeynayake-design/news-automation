@@ -2,8 +2,8 @@ name: News Automation Pipeline
 
 on:
   schedule:
-    # Runs every 30 minutes
-    - cron: '*/30 * * * *'
+   - cron: '*/30 * * * *'
+   
   workflow_dispatch: # Allows manual trigger from GitHub UI for testing
 
 jobs:
