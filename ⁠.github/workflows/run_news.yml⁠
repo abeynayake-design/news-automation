@@ -2,9 +2,11 @@ name: News Automation Pipeline
 
 on:
   schedule:
-    # Runs every 60 minutes
-    - cron: '*/0 * * * *'
-  workflow_dispatch: # Allows manual trigger from GitHub UI for testing
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-pipeline:
@@ -14,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set Up Python 3.10
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -34,10 +36,7 @@ jobs:
 
       - name: Commit & Push History Updates
         run: |
-
-
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add published_history.txt || true
-          git diff-index --quiet HEAD || git commit -m "Update published article history [skip ci]"
-          git push
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add published_history.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update published history [skip ci]" && git push)
