@@ -34,6 +34,8 @@ jobs:
 
       - name: Commit & Push History Updates
         run: |
+
+
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add published_history.txt || true
