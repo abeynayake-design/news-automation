@@ -12,22 +12,11 @@ WP_URL = os.getenv("WP_URL")
 WP_USER = os.getenv("WP_USER")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 
-# Add your YouTube Channel RSS feed URL or RSS Video Feed URL here
-YOUTUBE_RSS_URL = "YOUR_YOUTUBE_OR_VIDEO_RSS_FEED_URL"
-HISTORY_FILE = "published_video_history.txt"
-
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
-    return set()
-
-def save_to_history(entry_id):
-    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{entry_id}\n")
+# Your RSS.app Feed URL
+YOUTUBE_RSS_URL = "https://rss.app/feeds/E2WvJe9Ayyma7Zzn.xml"
 
 def extract_youtube_id(url_or_guid):
-    """Extracts 11-character YouTube video ID from various YouTube URL formats or RSS GUIDs."""
+    """Extracts 11-character YouTube video ID from links or descriptions."""
     patterns = [
         r"(?:v=|\/vi\/|\/videos\/|\/embed\/|\/shorts\/|youtu\.be\/|\/v\/|yt:video:)([a-zA-Z0-9_-]{11})"
     ]
@@ -46,12 +35,11 @@ def get_youtube_thumbnail_url(video_id):
             return maxres_url
     except Exception:
         pass
-    # Fallback to standard high-definition thumbnail if maxres isn't generated
     return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
 def upload_image_to_wordpress(image_url, title):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         img_res = requests.get(image_url, headers=headers, timeout=10)
         if img_res.status_code == 200:
             clean_title = re.sub(r'[^a-zA-Z0-9]', '_', title)[:20]
@@ -61,15 +49,17 @@ def upload_image_to_wordpress(image_url, title):
             media_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
             media_headers = {
                 "Authorization": f"Basic {token}",
-                "User-Agent": "Mozilla/5.0",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Type": img_res.headers.get("Content-Type", "image/jpeg")
             }
             upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
             if upload_res.status_code in [200, 201]:
                 media_id = upload_res.json().get("id")
-                print(f"Uploaded thumbnail to WP Media Library. Media ID: {media_id}")
+                print(f"=== STEP 2 DEBUG: Uploaded thumbnail to WP Media. ID: {media_id} ===")
                 return media_id
+            else:
+                print(f"=== STEP 2 ERROR: WP Media Upload Failed ({upload_res.status_code}): {upload_res.text} ===")
     except Exception as e:
         print(f"Thumbnail upload exception: {e}")
     return None
@@ -103,7 +93,7 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
     headers = {
         "Authorization": f"Basic {token}",
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
     
     video_id = extract_youtube_id(video_url)
@@ -119,46 +109,62 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
         body["featured_media"] = featured_media_id
 
     res = requests.post(api_endpoint, headers=headers, json=body, timeout=10)
-    return res.status_code in [200, 201]
+    if res.status_code in [200, 201]:
+        print(f"=== STEP 3 SUCCESS: Published '{title}' to WP Category 32! ===")
+        return True
+    else:
+        print(f"=== STEP 3 ERROR: WP Post Rejected ({res.status_code}): {res.text} ===")
+        return False
 
 def run_video_pipeline():
-    history = load_history()
-    feed = feedparser.parse(YOUTUBE_RSS_URL)
+    # Browser headers required to bypass RSS.app 403 blocking
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     
-    print(f"Found {len(feed.entries)} items in video feed.")
+    try:
+        response = requests.get(YOUTUBE_RSS_URL, headers=headers, timeout=12)
+        if response.status_code == 200:
+            feed = feedparser.parse(response.text)
+        else:
+            print(f"=== STEP 1 ERROR: Failed to fetch feed. Status Code: {response.status_code} ===")
+            return
+    except Exception as e:
+        print(f"=== STEP 1 EXCEPTION: {e} ===")
+        return
+
+    print(f"=== STEP 1 DEBUG: Found {len(feed.entries)} items in video feed ===")
     
+    if not feed.entries:
+        print("=== STEP 1 WARNING: Feed returned 0 entries. ===")
+        return
+
     for entry in feed.entries:
         video_url = entry.link
         entry_title = entry.title
         summary = getattr(entry, 'summary', '')
         guid = getattr(entry, 'id', video_url)
 
-        if video_url in history or guid in history:
-            continue
-
-        video_id = extract_youtube_id(video_url) or extract_youtube_id(guid)
+        # Extract YouTube ID from link, GUID, or description
+        video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
         if not video_id:
-            print(f"Could not parse YouTube ID for {video_url}. Skipping.")
+            print(f"Skipping entry '{entry_title}' - No YouTube ID found.")
             continue
 
         print(f"\nProcessing Video: {entry_title} (ID: {video_id})")
-
-        # Get video thumbnail directly from YouTube
         thumbnail_url = get_youtube_thumbnail_url(video_id)
-        print(f"Extracted Thumbnail URL: {thumbnail_url}")
 
         try:
+            print("=== Rewriting title and summary with Gemini... ===")
             article_data = rewrite_with_gemini(entry_title, summary)
         except Exception as e:
             print(f"Gemini processing error: {e}")
             continue
 
         media_id = upload_image_to_wordpress(thumbnail_url, article_data["title"])
-
+        
         if post_to_wordpress(article_data["title"], article_data["content"], media_id, video_url):
-            save_to_history(video_url)
-            print(f"SUCCESS: Published video post '{article_data['title']}' to WordPress Category 32!")
-            break  # Process 1 video per run
+            break  # Process 1 item per execution
 
 if __name__ == "__main__":
     run_video_pipeline()
