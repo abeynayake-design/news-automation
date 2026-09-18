@@ -57,18 +57,21 @@ def fetch_urls_from_private_sheet():
 
 def extract_article_content(url):
     try:
-        # Browser User-Agent headers to prevent anti-bot blocking on news sites
-        custom_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5"
+        # Use 'requests' with a standard browser User-Agent to fetch raw HTML safely
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        downloaded = trafilatura.fetch_url(url, headers=custom_headers)
-        if downloaded:
-            extracted_text = trafilatura.extract(downloaded)
+        response = requests.get(url, headers=headers, timeout=12)
+        
+        if response.status_code == 200:
+            # Pass raw HTML string into Trafilatura to extract main article body
+            extracted_text = trafilatura.extract(response.text)
             if extracted_text:
                 print(f"=== STEP 2 DEBUG: Extracted {len(extracted_text)} characters from {url} ===")
                 return extracted_text
+        else:
+            print(f"=== STEP 2 DEBUG: HTTP {response.status_code} error fetching {url} ===")
+            
         print(f"=== STEP 2 DEBUG: Trafilatura returned EMPTY text for {url} ===")
     except Exception as e:
         print(f"=== STEP 2 DEBUG: Extraction error for {url}: {e} ===")
@@ -176,7 +179,7 @@ def run_sheets_pipeline():
         print(f"\nProcessing URL: {url}")
         raw_text = extract_article_content(url)
         
-        # Safeguard: Do not save to history if scraping failed
+        # Do NOT save URL to history if scraping yielded empty text
         if not raw_text or len(raw_text) < 100:
             print(f"=== STEP 2 WARNING: Could not extract readable text for {url}. Skipping without saving to history. ===")
             continue
