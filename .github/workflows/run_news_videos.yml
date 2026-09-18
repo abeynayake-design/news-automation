@@ -32,11 +32,3 @@ jobs:
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
         run: |
           python video_news_slider.py
-
-      - name: Commit History Updates
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add published_video_history.txt || true
-          git commit -m "Update video publication history [skip ci]" || true
-          git push
