@@ -74,6 +74,7 @@ def rewrite_with_gemini(raw_title, raw_summary):
     - Fields required:
       "title": "A captivating, clean headline"
       "content": "<p>A concise, compelling overview of the video content...</p>"
+      "excerpt": "A short 1-2 sentence plain text summary for slider overlays."
 
     Original Video Title: {raw_title}
     Video Summary: {raw_summary[:1500]}
@@ -86,7 +87,7 @@ def rewrite_with_gemini(raw_title, raw_summary):
         response_text = response_text[3:-3].strip()
     return json.loads(response_text)
 
-def post_to_wordpress(title, content_html, featured_media_id, video_url):
+def post_to_wordpress(title, content_html, excerpt_text, featured_media_id, video_url):
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -99,7 +100,7 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
     video_id = extract_youtube_id(video_url)
     full_content = f'<p><iframe width="100%" height="400" src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}" frameborder="0" allowfullscreen></iframe></p>{content_html}'
     
-    # Generate clean, web-safe slug (alphanumeric and hyphens only)
+    # Generate clean, web-safe slug
     clean_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().lower()
     clean_slug = re.sub(r'[\s-]+', '-', clean_slug)[:60]
 
@@ -107,8 +108,9 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
         "title": title,
         "slug": clean_slug,
         "content": full_content,
+        "excerpt": excerpt_text,  # Populates Excerpt field matching Make.com structure
         "status": "publish",
-        "categories": [32]  # News Videos Category ID
+        "categories": [32]  # Category ID 32
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
@@ -122,7 +124,6 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
         return False
 
 def run_video_pipeline():
-    # Browser headers required to bypass RSS.app 403 blocking
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -159,7 +160,7 @@ def run_video_pipeline():
         thumbnail_url = get_youtube_thumbnail_url(video_id)
 
         try:
-            print("=== Rewriting title and summary with Gemini... ===")
+            print("=== Rewriting title, summary, and excerpt with Gemini... ===")
             article_data = rewrite_with_gemini(entry_title, summary)
         except Exception as e:
             print(f"Gemini processing error: {e}")
@@ -167,8 +168,9 @@ def run_video_pipeline():
 
         media_id = upload_image_to_wordpress(thumbnail_url, article_data["title"])
         
-        if post_to_wordpress(article_data["title"], article_data["content"], media_id, video_url):
-            break  # Process 1 item per execution
+        excerpt_val = article_data.get("excerpt", summary[:150])
+        if post_to_wordpress(article_data["title"], article_data["content"], excerpt_val, media_id, video_url):
+            break
 
 if __name__ == "__main__":
     run_video_pipeline()
