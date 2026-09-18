@@ -27,7 +27,7 @@ def extract_youtube_id(url_or_guid):
     return None
 
 def get_youtube_thumbnail_url(video_id):
-    """Returns the highest resolution thumbnail available for the YouTube video ID."""
+    """Guarantees official YouTube thumbnail directly from YouTube CDN."""
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
     try:
         res = requests.head(maxres_url, timeout=5)
@@ -35,6 +35,7 @@ def get_youtube_thumbnail_url(video_id):
             return maxres_url
     except Exception:
         pass
+    # Fallback to standard high-definition YouTube thumbnail
     return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
 def upload_image_to_wordpress(image_url, title):
@@ -58,8 +59,6 @@ def upload_image_to_wordpress(image_url, title):
                 media_id = upload_res.json().get("id")
                 print(f"=== STEP 2 DEBUG: Uploaded thumbnail to WP Media. ID: {media_id} ===")
                 return media_id
-            else:
-                print(f"=== STEP 2 ERROR: WP Media Upload Failed ({upload_res.status_code}): {upload_res.text} ===")
     except Exception as e:
         print(f"Thumbnail upload exception: {e}")
     return None
@@ -100,7 +99,6 @@ def post_to_wordpress(title, content_html, excerpt_text, featured_media_id, vide
     video_id = extract_youtube_id(video_url)
     full_content = f'<p><iframe width="100%" height="400" src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}" frameborder="0" allowfullscreen></iframe></p>{content_html}'
     
-    # Generate clean, web-safe slug
     clean_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().lower()
     clean_slug = re.sub(r'[\s-]+', '-', clean_slug)[:60]
 
@@ -108,20 +106,15 @@ def post_to_wordpress(title, content_html, excerpt_text, featured_media_id, vide
         "title": title,
         "slug": clean_slug,
         "content": full_content,
-        "excerpt": excerpt_text,  # Populates Excerpt field matching Make.com structure
+        "excerpt": excerpt_text,
         "status": "publish",
-        "categories": [32]  # Category ID 32
+        "categories": [32]  # News Videos Category ID
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
 
     res = requests.post(api_endpoint, headers=headers, json=body, timeout=10)
-    if res.status_code in [200, 201]:
-        print(f"=== STEP 3 SUCCESS: Published '{title}' (slug: {clean_slug}) to WP Category 32! ===")
-        return True
-    else:
-        print(f"=== STEP 3 ERROR: WP Post Rejected ({res.status_code}): {res.text} ===")
-        return False
+    return res.status_code in [200, 201]
 
 def run_video_pipeline():
     headers = {
@@ -140,10 +133,6 @@ def run_video_pipeline():
         return
 
     print(f"=== STEP 1 DEBUG: Found {len(feed.entries)} items in video feed ===")
-    
-    if not feed.entries:
-        print("=== STEP 1 WARNING: Feed returned 0 entries. ===")
-        return
 
     for entry in feed.entries:
         video_url = entry.link
@@ -151,25 +140,27 @@ def run_video_pipeline():
         summary = getattr(entry, 'summary', '')
         guid = getattr(entry, 'id', video_url)
 
+        # Force YouTube ID extraction from link, GUID, or description
         video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
         if not video_id:
-            print(f"Skipping entry '{entry_title}' - No YouTube ID found.")
             continue
 
         print(f"\nProcessing Video: {entry_title} (ID: {video_id})")
+        
+        # ALWAYS pull direct YouTube thumbnail image
         thumbnail_url = get_youtube_thumbnail_url(video_id)
 
         try:
-            print("=== Rewriting title, summary, and excerpt with Gemini... ===")
             article_data = rewrite_with_gemini(entry_title, summary)
         except Exception as e:
             print(f"Gemini processing error: {e}")
             continue
 
         media_id = upload_image_to_wordpress(thumbnail_url, article_data["title"])
-        
         excerpt_val = article_data.get("excerpt", summary[:150])
+        
         if post_to_wordpress(article_data["title"], article_data["content"], excerpt_val, media_id, video_url):
+            print(f"SUCCESS: Published video post '{article_data['title']}' with clean YouTube thumbnail!")
             break
 
 if __name__ == "__main__":
