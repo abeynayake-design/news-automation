@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -14,7 +13,7 @@ WP_USER = os.getenv("WP_USER")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 
 # Add your YouTube Channel RSS feed URL or RSS Video Feed URL here
-YOUTUBE_RSS_URL = "https://rss.app/feeds/E2WvJe9Ayyma7Zzn.xml"
+YOUTUBE_RSS_URL = "YOUR_YOUTUBE_OR_VIDEO_RSS_FEED_URL"
 HISTORY_FILE = "published_video_history.txt"
 
 def load_history():
@@ -41,9 +40,12 @@ def extract_youtube_id(url_or_guid):
 def get_youtube_thumbnail_url(video_id):
     """Returns the highest resolution thumbnail available for the YouTube video ID."""
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-    res = requests.head(maxres_url, timeout=5)
-    if res.status_code == 200:
-        return maxres_url
+    try:
+        res = requests.head(maxres_url, timeout=5)
+        if res.status_code == 200:
+            return maxres_url
+    except Exception:
+        pass
     # Fallback to standard high-definition thumbnail if maxres isn't generated
     return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
@@ -52,7 +54,8 @@ def upload_image_to_wordpress(image_url, title):
         headers = {"User-Agent": "Mozilla/5.0"}
         img_res = requests.get(image_url, headers=headers, timeout=10)
         if img_res.status_code == 200:
-            filename = f"yt_thumb_{title.replace(' ', '_')[:20]}.jpg"
+            clean_title = re.sub(r'[^a-zA-Z0-9]', '_', title)[:20]
+            filename = f"yt_thumb_{clean_title}.jpg"
             credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
             token = base64.b64encode(credentials.encode()).decode("utf-8")
             media_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
@@ -103,13 +106,14 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
         "User-Agent": "Mozilla/5.0"
     }
     
-    # Optional: Embeds video link directly at the top of post content
-    full_content = f'<p><iframe width="100%" height="400" src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){extract_youtube_id(video_url)}" frameborder="0" allowfullscreen></iframe></p>{content_html}'
+    video_id = extract_youtube_id(video_url)
+    full_content = f'<p><iframe width="100%" height="400" src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}" frameborder="0" allowfullscreen></iframe></p>{content_html}'
     
     body = {
         "title": title,
         "content": full_content,
-        "status": "publish"
+        "status": "publish",
+        "categories": [32]  # News Videos Category ID
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
@@ -139,7 +143,7 @@ def run_video_pipeline():
 
         print(f"\nProcessing Video: {entry_title} (ID: {video_id})")
 
-        # Get video thumbnail directly from YouTube (No Pexels API needed)
+        # Get video thumbnail directly from YouTube
         thumbnail_url = get_youtube_thumbnail_url(video_id)
         print(f"Extracted Thumbnail URL: {thumbnail_url}")
 
@@ -153,7 +157,7 @@ def run_video_pipeline():
 
         if post_to_wordpress(article_data["title"], article_data["content"], media_id, video_url):
             save_to_history(video_url)
-            print(f"SUCCESS: Published video post '{article_data['title']}' to WordPress!")
+            print(f"SUCCESS: Published video post '{article_data['title']}' to WordPress Category 32!")
             break  # Process 1 video per run
 
 if __name__ == "__main__":
