@@ -99,8 +99,13 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
     video_id = extract_youtube_id(video_url)
     full_content = f'<p><iframe width="100%" height="400" src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}" frameborder="0" allowfullscreen></iframe></p>{content_html}'
     
+    # Generate clean, web-safe slug (alphanumeric and hyphens only)
+    clean_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().lower()
+    clean_slug = re.sub(r'[\s-]+', '-', clean_slug)[:60]
+
     body = {
         "title": title,
+        "slug": clean_slug,
         "content": full_content,
         "status": "publish",
         "categories": [32]  # News Videos Category ID
@@ -110,7 +115,7 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
 
     res = requests.post(api_endpoint, headers=headers, json=body, timeout=10)
     if res.status_code in [200, 201]:
-        print(f"=== STEP 3 SUCCESS: Published '{title}' to WP Category 32! ===")
+        print(f"=== STEP 3 SUCCESS: Published '{title}' (slug: {clean_slug}) to WP Category 32! ===")
         return True
     else:
         print(f"=== STEP 3 ERROR: WP Post Rejected ({res.status_code}): {res.text} ===")
@@ -145,7 +150,6 @@ def run_video_pipeline():
         summary = getattr(entry, 'summary', '')
         guid = getattr(entry, 'id', video_url)
 
-        # Extract YouTube ID from link, GUID, or description
         video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
         if not video_id:
             print(f"Skipping entry '{entry_title}' - No YouTube ID found.")
