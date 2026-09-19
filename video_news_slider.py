@@ -87,6 +87,7 @@ def rewrite_with_gemini(raw_title, raw_summary):
     - Fields required:
       "title": "A captivating, clean headline"
       "content": "<p>A concise, compelling overview of the video content...</p>"
+      "excerpt": "A short 1-2 sentence plain text summary for slider overlays."
 
     Original Video Title: {raw_title}
     Video Summary: {raw_summary[:1500]}
@@ -99,7 +100,7 @@ def rewrite_with_gemini(raw_title, raw_summary):
         response_text = response_text[3:-3].strip()
     return json.loads(response_text)
 
-def post_to_wordpress(title, content_html, featured_media_id, video_url):
+def post_to_wordpress(title, content_html, text_excerpt, featured_media_id, video_url):
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -110,26 +111,35 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
     }
     
     video_id = extract_youtube_id(video_url)
+    embed_url = f"[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}"
+    watch_url = f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){video_id}"
     
-    # EXACT MAKE.COM EMBED HTML STRUCTURE FOR EXCERPT
-    make_style_excerpt = (
+    # Fully responsive embed HTML block
+    embed_block = (
         f'<div><div><div style="left: 0; width: 100%; height: 0; position: relative; padding-bottom: 56.25%;">'
-        f'<iframe src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}?rel=0" '
+        f'<iframe src="{embed_url}?rel=0" '
         f'style="top: 0; left: 0; width: 100%; height: 100%; position: absolute; border: 0;" '
         f'allowfullscreen scrolling="no" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture;">'
         f'</iframe></div></div></div>'
     )
     
+    # Combined content ensures the player exists in the body even if excerpt sanitizes
+    full_body_content = f"{embed_block}\n{content_html}"
+
     clean_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().lower()
     clean_slug = re.sub(r'[\s-]+', '-', clean_slug)[:60]
 
     body = {
         "title": title,
         "slug": clean_slug,
-        "content": content_html,
-        "excerpt": make_style_excerpt,  # Injects the iframe wrapper into Excerpt!
+        "content": full_body_content,
+        "excerpt": text_excerpt,
         "status": "publish",
-        "categories": [32]
+        "categories": [32],
+        "meta": {
+            "youtube_url": watch_url,
+            "youtube_embed": embed_block
+        }
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
@@ -184,9 +194,10 @@ def run_video_pipeline():
             continue
 
         media_id = upload_image_to_wordpress(thumbnail_url, article_data["title"])
+        excerpt_val = article_data.get("excerpt", summary[:150])
         
-        if post_to_wordpress(article_data["title"], article_data["content"], media_id, video_url):
-            print(f"=== SUCCESS: Published video '{article_data['title']}' using Make.com excerpt formatting ===")
+        if post_to_wordpress(article_data["title"], article_data["content"], excerpt_val, media_id, video_url):
+            print(f"=== SUCCESS: Published video '{article_data['title']}' ===")
             history.append(video_id)
             save_history(history)
             break
