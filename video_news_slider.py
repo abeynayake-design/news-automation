@@ -42,7 +42,8 @@ def extract_youtube_id(url_or_guid_or_text):
             return match.group(1)
     return None
 
-def get_youtube_thumbnail_url(video_id):
+def get_pure_youtube_thumbnail(video_id):
+    """FORCES using YouTube's official CDN thumbnail. Ignores feed images completely."""
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
     try:
         res = requests.head(maxres_url, timeout=5)
@@ -58,7 +59,7 @@ def upload_image_to_wordpress(image_url, title):
         img_res = requests.get(image_url, headers=headers, timeout=10)
         if img_res.status_code == 200:
             clean_title = re.sub(r'[^a-zA-Z0-9]', '_', title)[:20]
-            filename = f"yt_thumb_{clean_title}.jpg"
+            filename = f"yt_cdn_{clean_title}.jpg"
             credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
             token = base64.b64encode(credentials.encode()).decode("utf-8")
             media_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
@@ -71,7 +72,7 @@ def upload_image_to_wordpress(image_url, title):
             upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
             if upload_res.status_code in [200, 201]:
                 media_id = upload_res.json().get("id")
-                print(f"=== Uploaded YouTube CDN thumbnail to WP Media. ID: {media_id} ===")
+                print(f"=== FORCED YOUTUBE CDN UPLOAD SUCCESS: Media ID {media_id} ===")
                 return media_id
     except Exception as e:
         print(f"Thumbnail upload exception: {e}")
@@ -162,7 +163,7 @@ def run_video_pipeline():
         video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
         
         if not video_id:
-            print(f"Skipping '{entry_title}' - No valid YouTube ID.")
+            print(f"Skipping '{entry_title}' - No valid YouTube ID found.")
             continue
 
         if video_id in history:
@@ -171,7 +172,8 @@ def run_video_pipeline():
 
         print(f"\nProcessing New Video: {entry_title} (YouTube ID: {video_id})")
         
-        thumbnail_url = get_youtube_thumbnail_url(video_id)
+        # Explicitly ignore feed images and use ONLY direct YouTube CDN URL
+        thumbnail_url = get_pure_youtube_thumbnail(video_id)
 
         try:
             article_data = rewrite_with_gemini(entry_title, summary)
@@ -183,7 +185,7 @@ def run_video_pipeline():
         excerpt_val = article_data.get("excerpt", summary[:150])
         
         if post_to_wordpress(article_data["title"], article_data["content"], excerpt_val, media_id, video_url):
-            print(f"=== SUCCESS: Published video '{article_data['title']}' ===")
+            print(f"=== SUCCESS: Published video '{article_data['title']}' with YouTube CDN image ===")
             history.append(video_id)
             save_history(history)
             break
