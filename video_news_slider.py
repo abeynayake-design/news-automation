@@ -15,19 +15,19 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 # Your RSS.app Feed URL
 YOUTUBE_RSS_URL = "https://rss.app/feeds/E2WvJe9Ayyma7Zzn.xml"
 
-def extract_youtube_id(url_or_guid):
-    """Extracts 11-character YouTube video ID from links or descriptions."""
+def extract_youtube_id(url_or_guid_or_text):
+    """Extracts 11-character YouTube video ID from links, GUIDs, or HTML descriptions."""
     patterns = [
         r"(?:v=|\/vi\/|\/videos\/|\/embed\/|\/shorts\/|youtu\.be\/|\/v\/|yt:video:)([a-zA-Z0-9_-]{11})"
     ]
     for pattern in patterns:
-        match = re.search(pattern, url_or_guid)
+        match = re.search(pattern, str(url_or_guid_or_text))
         if match:
             return match.group(1)
     return None
 
 def get_youtube_thumbnail_url(video_id):
-    """Guarantees official YouTube thumbnail directly from YouTube CDN."""
+    """FORCES fetching direct high-res thumbnail from YouTube CDN, bypassing RSS images completely."""
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
     try:
         res = requests.head(maxres_url, timeout=5)
@@ -35,7 +35,6 @@ def get_youtube_thumbnail_url(video_id):
             return maxres_url
     except Exception:
         pass
-    # Fallback to standard high-definition YouTube thumbnail
     return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
 def upload_image_to_wordpress(image_url, title):
@@ -57,8 +56,10 @@ def upload_image_to_wordpress(image_url, title):
             upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
             if upload_res.status_code in [200, 201]:
                 media_id = upload_res.json().get("id")
-                print(f"=== STEP 2 DEBUG: Uploaded thumbnail to WP Media. ID: {media_id} ===")
+                print(f"=== Uploaded YouTube CDN thumbnail to WP Media. ID: {media_id} ===")
                 return media_id
+            else:
+                print(f"=== WP Media Error ({upload_res.status_code}): {upload_res.text} ===")
     except Exception as e:
         print(f"Thumbnail upload exception: {e}")
     return None
@@ -108,13 +109,18 @@ def post_to_wordpress(title, content_html, excerpt_text, featured_media_id, vide
         "content": full_content,
         "excerpt": excerpt_text,
         "status": "publish",
-        "categories": [32]  # News Videos Category ID
+        "categories": [32]  # Category ID 32
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
 
     res = requests.post(api_endpoint, headers=headers, json=body, timeout=10)
-    return res.status_code in [200, 201]
+    if res.status_code in [200, 201]:
+        print(f"=== SUCCESS: Published '{title}' (slug: {clean_slug}) to WP Category 32! ===")
+        return True
+    else:
+        print(f"=== ERROR: WP Post Rejected ({res.status_code}): {res.text} ===")
+        return False
 
 def run_video_pipeline():
     headers = {
@@ -126,13 +132,13 @@ def run_video_pipeline():
         if response.status_code == 200:
             feed = feedparser.parse(response.text)
         else:
-            print(f"=== STEP 1 ERROR: Failed to fetch feed. Status Code: {response.status_code} ===")
+            print(f"=== STEP 1 ERROR: Failed to fetch feed ({response.status_code}) ===")
             return
     except Exception as e:
         print(f"=== STEP 1 EXCEPTION: {e} ===")
         return
 
-    print(f"=== STEP 1 DEBUG: Found {len(feed.entries)} items in video feed ===")
+    print(f"=== Found {len(feed.entries)} items in video feed ===")
 
     for entry in feed.entries:
         video_url = entry.link
@@ -140,14 +146,15 @@ def run_video_pipeline():
         summary = getattr(entry, 'summary', '')
         guid = getattr(entry, 'id', video_url)
 
-        # Force YouTube ID extraction from link, GUID, or description
+        # Force YouTube ID extraction from URL, GUID, or description text
         video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
         if not video_id:
+            print(f"Skipping '{entry_title}' - No YouTube ID found.")
             continue
 
-        print(f"\nProcessing Video: {entry_title} (ID: {video_id})")
+        print(f"\nProcessing Video: {entry_title} (YouTube ID: {video_id})")
         
-        # ALWAYS pull direct YouTube thumbnail image
+        # Get crisp image directly from YouTube CDN (bypassing rss.app media)
         thumbnail_url = get_youtube_thumbnail_url(video_id)
 
         try:
@@ -160,7 +167,6 @@ def run_video_pipeline():
         excerpt_val = article_data.get("excerpt", summary[:150])
         
         if post_to_wordpress(article_data["title"], article_data["content"], excerpt_val, media_id, video_url):
-            print(f"SUCCESS: Published video post '{article_data['title']}' with clean YouTube thumbnail!")
             break
 
 if __name__ == "__main__":
