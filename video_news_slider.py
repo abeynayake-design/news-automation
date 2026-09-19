@@ -14,9 +14,25 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 
 # Your RSS.app Feed URL
 YOUTUBE_RSS_URL = "https://rss.app/feeds/E2WvJe9Ayyma7Zzn.xml"
+HISTORY_FILE = "published_videos.json"
+
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_history(history_list):
+    try:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(history_list[-50:], f)
+    except Exception as e:
+        print(f"Error saving history: {e}")
 
 def extract_youtube_id(url_or_guid_or_text):
-    """Extracts 11-character YouTube video ID from links, GUIDs, or HTML descriptions."""
     patterns = [
         r"(?:v=|\/vi\/|\/videos\/|\/embed\/|\/shorts\/|youtu\.be\/|\/v\/|yt:video:)([a-zA-Z0-9_-]{11})"
     ]
@@ -27,7 +43,6 @@ def extract_youtube_id(url_or_guid_or_text):
     return None
 
 def get_youtube_thumbnail_url(video_id):
-    """FORCES fetching direct high-res thumbnail from YouTube CDN, bypassing RSS images completely."""
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
     try:
         res = requests.head(maxres_url, timeout=5)
@@ -58,8 +73,6 @@ def upload_image_to_wordpress(image_url, title):
                 media_id = upload_res.json().get("id")
                 print(f"=== Uploaded YouTube CDN thumbnail to WP Media. ID: {media_id} ===")
                 return media_id
-            else:
-                print(f"=== WP Media Error ({upload_res.status_code}): {upload_res.text} ===")
     except Exception as e:
         print(f"Thumbnail upload exception: {e}")
     return None
@@ -109,23 +122,23 @@ def post_to_wordpress(title, content_html, excerpt_text, featured_media_id, vide
         "content": full_content,
         "excerpt": excerpt_text,
         "status": "publish",
-        "categories": [32]  # Category ID 32
+        "categories": [32],
+        "meta": {
+            "youtube_url": f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){video_id}"
+        }
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
 
     res = requests.post(api_endpoint, headers=headers, json=body, timeout=10)
-    if res.status_code in [200, 201]:
-        print(f"=== SUCCESS: Published '{title}' (slug: {clean_slug}) to WP Category 32! ===")
-        return True
-    else:
-        print(f"=== ERROR: WP Post Rejected ({res.status_code}): {res.text} ===")
-        return False
+    return res.status_code in [200, 201]
 
 def run_video_pipeline():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    
+    history = load_history()
     
     try:
         response = requests.get(YOUTUBE_RSS_URL, headers=headers, timeout=12)
@@ -146,15 +159,18 @@ def run_video_pipeline():
         summary = getattr(entry, 'summary', '')
         guid = getattr(entry, 'id', video_url)
 
-        # Force YouTube ID extraction from URL, GUID, or description text
         video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
+        
         if not video_id:
-            print(f"Skipping '{entry_title}' - No YouTube ID found.")
+            print(f"Skipping '{entry_title}' - No valid YouTube ID.")
             continue
 
-        print(f"\nProcessing Video: {entry_title} (YouTube ID: {video_id})")
+        if video_id in history:
+            print(f"Skipping video ID {video_id} - Already processed.")
+            continue
+
+        print(f"\nProcessing New Video: {entry_title} (YouTube ID: {video_id})")
         
-        # Get crisp image directly from YouTube CDN (bypassing rss.app media)
         thumbnail_url = get_youtube_thumbnail_url(video_id)
 
         try:
@@ -167,6 +183,9 @@ def run_video_pipeline():
         excerpt_val = article_data.get("excerpt", summary[:150])
         
         if post_to_wordpress(article_data["title"], article_data["content"], excerpt_val, media_id, video_url):
+            print(f"=== SUCCESS: Published video '{article_data['title']}' ===")
+            history.append(video_id)
+            save_history(history)
             break
 
 if __name__ == "__main__":
