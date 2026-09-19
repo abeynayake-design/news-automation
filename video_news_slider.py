@@ -114,16 +114,12 @@ def post_to_wordpress(title, content_html, text_excerpt, featured_media_id, vide
     embed_url = f"[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}"
     watch_url = f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){video_id}"
     
-    # Fully responsive embed HTML block
     embed_block = (
-        f'<div><div><div style="left: 0; width: 100%; height: 0; position: relative; padding-bottom: 56.25%;">'
-        f'<iframe src="{embed_url}?rel=0" '
-        f'style="top: 0; left: 0; width: 100%; height: 100%; position: absolute; border: 0;" '
-        f'allowfullscreen scrolling="no" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture;">'
-        f'</iframe></div></div></div>'
+        f'<p><iframe width="100%" height="400" src="{embed_url}" '
+        f'frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" '
+        f'allowfullscreen></iframe></p>'
     )
     
-    # Combined content ensures the player exists in the body even if excerpt sanitizes
     full_body_content = f"{embed_block}\n{content_html}"
 
     clean_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().lower()
