@@ -111,13 +111,11 @@ def post_to_wordpress(title, content_html, text_excerpt, featured_media_id, vide
     }
     
     video_id = extract_youtube_id(video_url)
-    embed_url = f"[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}"
-    watch_url = f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){video_id}"
+    clean_yt_link = f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){video_id}"
     
     embed_block = (
-        f'<p><iframe width="100%" height="400" src="{embed_url}" '
-        f'frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" '
-        f'allowfullscreen></iframe></p>'
+        f'<p><iframe width="100%" height="400" src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}" '
+        f'frameborder="0" allowfullscreen></iframe></p>'
     )
     
     full_body_content = f"{embed_block}\n{content_html}"
@@ -133,8 +131,10 @@ def post_to_wordpress(title, content_html, text_excerpt, featured_media_id, vide
         "status": "publish",
         "categories": [32],
         "meta": {
-            "youtube_url": watch_url,
-            "youtube_embed": embed_block
+            "videourl": clean_yt_link,
+            "video_url": clean_yt_link,
+            "youtube_url": clean_yt_link,
+            "youtube_id": video_id
         }
     }
     if featured_media_id:
