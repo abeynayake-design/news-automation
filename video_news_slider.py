@@ -87,7 +87,6 @@ def rewrite_with_gemini(raw_title, raw_summary):
     - Fields required:
       "title": "A captivating, clean headline"
       "content": "<p>A concise, compelling overview of the video content...</p>"
-      "excerpt": "A short 1-2 sentence plain text summary for slider overlays."
 
     Original Video Title: {raw_title}
     Video Summary: {raw_summary[:1500]}
@@ -100,7 +99,7 @@ def rewrite_with_gemini(raw_title, raw_summary):
         response_text = response_text[3:-3].strip()
     return json.loads(response_text)
 
-def post_to_wordpress(title, content_html, text_excerpt, featured_media_id, video_url):
+def post_to_wordpress(title, content_html, featured_media_id, video_url):
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -127,15 +126,9 @@ def post_to_wordpress(title, content_html, text_excerpt, featured_media_id, vide
         "title": title,
         "slug": clean_slug,
         "content": full_body_content,
-        "excerpt": text_excerpt,
+        "excerpt": clean_yt_link,  # Pure YouTube link inside Excerpt for Smart Slider!
         "status": "publish",
-        "categories": [32],
-        "format": "video",
-        "meta": {
-            "videourl": clean_yt_link,
-            "video_url": clean_yt_link,
-            "youtube_url": clean_yt_link
-        }
+        "categories": [32]
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
@@ -190,9 +183,8 @@ def run_video_pipeline():
             continue
 
         media_id = upload_image_to_wordpress(thumbnail_url, article_data["title"])
-        excerpt_val = article_data.get("excerpt", summary[:150])
         
-        if post_to_wordpress(article_data["title"], article_data["content"], excerpt_val, media_id, video_url):
+        if post_to_wordpress(article_data["title"], article_data["content"], media_id, video_url):
             print(f"=== SUCCESS: Published video '{article_data['title']}' ===")
             history.append(video_id)
             save_history(history)
