@@ -43,7 +43,6 @@ def extract_youtube_id(url_or_guid_or_text):
     return None
 
 def get_pure_youtube_thumbnail(video_id):
-    """FORCES using YouTube's official CDN thumbnail. Ignores feed images completely."""
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
     try:
         res = requests.head(maxres_url, timeout=5)
@@ -72,7 +71,7 @@ def upload_image_to_wordpress(image_url, title):
             upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
             if upload_res.status_code in [200, 201]:
                 media_id = upload_res.json().get("id")
-                print(f"=== FORCED YOUTUBE CDN UPLOAD SUCCESS: Media ID {media_id} ===")
+                print(f"=== UPLOAD SUCCESS: Media ID {media_id} ===")
                 return media_id
     except Exception as e:
         print(f"Thumbnail upload exception: {e}")
@@ -81,14 +80,13 @@ def upload_image_to_wordpress(image_url, title):
 def rewrite_with_gemini(raw_title, raw_summary):
     client = genai.Client(api_key=GEMINI_API_KEY.strip())
     prompt = f"""
-    You are a video content editor. Rewrite the following video headline and description into an engaging web summary for a site overlay slider.
+    You are a video content editor. Rewrite the following video headline and description into an engaging web summary.
     
     Formatting rules:
     - Return ONLY a raw JSON object. Do not include markdown tags like ```json.
     - Fields required:
       "title": "A captivating, clean headline"
       "content": "<p>A concise, compelling overview of the video content...</p>"
-      "excerpt": "A short 1-2 sentence plain text summary for slider overlays."
 
     Original Video Title: {raw_title}
     Video Summary: {raw_summary[:1500]}
@@ -101,7 +99,7 @@ def rewrite_with_gemini(raw_title, raw_summary):
         response_text = response_text[3:-3].strip()
     return json.loads(response_text)
 
-def post_to_wordpress(title, content_html, excerpt_text, featured_media_id, video_url):
+def post_to_wordpress(title, content_html, featured_media_id, video_url):
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -112,7 +110,15 @@ def post_to_wordpress(title, content_html, excerpt_text, featured_media_id, vide
     }
     
     video_id = extract_youtube_id(video_url)
-    full_content = f'<p><iframe width="100%" height="400" src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}" frameborder="0" allowfullscreen></iframe></p>{content_html}'
+    
+    # EXACT MAKE.COM EMBED HTML STRUCTURE FOR EXCERPT
+    make_style_excerpt = (
+        f'<div><div><div style="left: 0; width: 100%; height: 0; position: relative; padding-bottom: 56.25%;">'
+        f'<iframe src="[https://www.youtube.com/embed/](https://www.youtube.com/embed/){video_id}?rel=0" '
+        f'style="top: 0; left: 0; width: 100%; height: 100%; position: absolute; border: 0;" '
+        f'allowfullscreen scrolling="no" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture;">'
+        f'</iframe></div></div></div>'
+    )
     
     clean_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().lower()
     clean_slug = re.sub(r'[\s-]+', '-', clean_slug)[:60]
@@ -120,13 +126,10 @@ def post_to_wordpress(title, content_html, excerpt_text, featured_media_id, vide
     body = {
         "title": title,
         "slug": clean_slug,
-        "content": full_content,
-        "excerpt": excerpt_text,
+        "content": content_html,
+        "excerpt": make_style_excerpt,  # Injects the iframe wrapper into Excerpt!
         "status": "publish",
-        "categories": [32],
-        "meta": {
-            "youtube_url": f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){video_id}"
-        }
+        "categories": [32]
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
@@ -163,7 +166,7 @@ def run_video_pipeline():
         video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
         
         if not video_id:
-            print(f"Skipping '{entry_title}' - No valid YouTube ID found.")
+            print(f"Skipping '{entry_title}' - No valid YouTube ID.")
             continue
 
         if video_id in history:
@@ -172,7 +175,6 @@ def run_video_pipeline():
 
         print(f"\nProcessing New Video: {entry_title} (YouTube ID: {video_id})")
         
-        # Explicitly ignore feed images and use ONLY direct YouTube CDN URL
         thumbnail_url = get_pure_youtube_thumbnail(video_id)
 
         try:
@@ -182,10 +184,9 @@ def run_video_pipeline():
             continue
 
         media_id = upload_image_to_wordpress(thumbnail_url, article_data["title"])
-        excerpt_val = article_data.get("excerpt", summary[:150])
         
-        if post_to_wordpress(article_data["title"], article_data["content"], excerpt_val, media_id, video_url):
-            print(f"=== SUCCESS: Published video '{article_data['title']}' with YouTube CDN image ===")
+        if post_to_wordpress(article_data["title"], article_data["content"], media_id, video_url):
+            print(f"=== SUCCESS: Published video '{article_data['title']}' using Make.com excerpt formatting ===")
             history.append(video_id)
             save_history(history)
             break
