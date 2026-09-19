@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import base64
 import requests
 import feedparser
 
@@ -13,7 +15,6 @@ HISTORY_FILE = "published_videos.json"
 def load_history():
     if os.path.exists(HISTORY_FILE):
         try:
-            import json
             with open(HISTORY_FILE, "r") as f:
                 return json.load(f)
         except Exception:
@@ -22,7 +23,6 @@ def load_history():
 
 def save_history(history_list):
     try:
-        import json
         with open(HISTORY_FILE, "w") as f:
             json.dump(history_list[-50:], f)
     except Exception as e:
@@ -38,8 +38,43 @@ def extract_youtube_id(url_or_guid_or_text):
             return match.group(1)
     return None
 
+def get_youtube_thumbnail_url(video_id):
+    """Checks for max-resolution YouTube thumbnail, falls back to high quality."""
+    maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+    try:
+        res = requests.head(maxres_url, timeout=5)
+        if res.status_code == 200:
+            return maxres_url
+    except Exception:
+        pass
+    return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+
+def upload_thumbnail_to_wordpress(image_url, video_id):
+    """Downloads YouTube CDN thumbnail and uploads it to WP Media Library."""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        img_res = requests.get(image_url, headers=headers, timeout=10)
+        if img_res.status_code == 200:
+            filename = f"yt_cover_{video_id}.jpg"
+            credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
+            token = base64.b64encode(credentials.encode()).decode("utf-8")
+            media_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
+            media_headers = {
+                "Authorization": f"Basic {token}",
+                "User-Agent": "Mozilla/5.0",
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": img_res.headers.get("Content-Type", "image/jpeg")
+            }
+            upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
+            if upload_res.status_code in [200, 201]:
+                media_id = upload_res.json().get("id")
+                print(f"=== Featured Image Uploaded: Media ID {media_id} ===")
+                return media_id
+    except Exception as e:
+        print(f"Thumbnail upload exception: {e}")
+    return None
+
 def post_to_wordpress(title, video_url):
-    import base64
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -55,15 +90,21 @@ def post_to_wordpress(title, video_url):
     clean_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().lower()
     clean_slug = re.sub(r'[\s-]+', '-', clean_slug)[:60]
 
-    # Passes ONLY the raw YouTube URL in excerpt for Smart Slider to read
+    # Fetch YouTube CDN image and upload to WP Media Library
+    thumb_url = get_youtube_thumbnail_url(video_id)
+    featured_media_id = upload_thumbnail_to_wordpress(thumb_url, video_id)
+
     body = {
         "title": title,
         "slug": clean_slug,
-        "content": f'<p>https://www.youtube.com/watch?v={video_id}</p>',
-        "excerpt": clean_yt_link,
+        "content": f'<p><iframe width="100%" height="400" src="https://www.youtube.com/embed/{video_id}" frameborder="0" allowfullscreen></iframe></p>',
+        "excerpt": clean_yt_link,  # Pure YouTube link for Smart Slider 5
         "status": "publish",
         "categories": [32]
     }
+
+    if featured_media_id:
+        body["featured_media"] = featured_media_id
 
     res = requests.post(api_endpoint, headers=headers, json=body, timeout=10)
     return res.status_code in [200, 201]
@@ -94,7 +135,7 @@ def run_video_pipeline():
         if not video_id or video_id in history:
             continue
 
-        print(f"Posting Video: {entry_title} ({video_id})")
+        print(f"Posting Video with Featured Image: {entry_title} ({video_id})")
         
         if post_to_wordpress(entry_title, video_url):
             print(f"Successfully published: {entry_title}")
