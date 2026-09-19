@@ -130,7 +130,12 @@ def post_to_wordpress(title, content_html, text_excerpt, featured_media_id, vide
         "excerpt": text_excerpt,
         "status": "publish",
         "categories": [32],
-        "format": "video"
+        "format": "video",
+        "meta": {
+            "videourl": clean_yt_link,
+            "video_url": clean_yt_link,
+            "youtube_url": clean_yt_link
+        }
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
