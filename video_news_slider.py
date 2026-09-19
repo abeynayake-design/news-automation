@@ -6,13 +6,11 @@ import requests
 import feedparser
 from google import genai
 
-# Configuration from GitHub Secrets
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WP_URL = os.getenv("WP_URL")
 WP_USER = os.getenv("WP_USER")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 
-# Your RSS.app Feed URL
 YOUTUBE_RSS_URL = "https://rss.app/feeds/E2WvJe9Ayyma7Zzn.xml"
 HISTORY_FILE = "published_videos.json"
 
@@ -126,7 +124,7 @@ def post_to_wordpress(title, content_html, featured_media_id, video_url):
         "title": title,
         "slug": clean_slug,
         "content": full_body_content,
-        "excerpt": clean_yt_link,  # Pure YouTube link inside Excerpt for Smart Slider!
+        "excerpt": clean_yt_link,  # Direct YouTube watch URL for {description}
         "status": "publish",
         "categories": [32]
     }
