@@ -50,20 +50,19 @@ def is_already_published_in_wp(video_id):
                 content = post.get("content", {}).get("rendered", "")
                 excerpt = post.get("excerpt", {}).get("rendered", "")
                 
-                # Search title, content, excerpt, OR raw JSON representation
                 if video_id in content or video_id in excerpt or video_id in title:
                     print(f"==> MATCH FOUND! Video ID '{video_id}' exists in WP Post ID {post_id} ('{title}').")
-                    return True # BLOCK POSTING (Already exists)
+                    return True # BLOCK POSTING
             
             print(f"==> NO MATCH FOUND for Video ID '{video_id}'. Safe to publish.")
             return False # SAFE TO POST
         else:
             print(f"CRITICAL ERROR: WP API returned status {res.status_code}.")
-            return True # BLOCK POSTING (Fail safe)
+            return True # BLOCK POSTING
             
     except Exception as e:
         print(f"CRITICAL EXCEPTION connecting to WP: {e}")
-        return True # BLOCK POSTING (Fail safe)
+        return True # BLOCK POSTING
 
 def get_youtube_thumbnail_url(video_id):
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
@@ -90,16 +89,19 @@ def upload_thumbnail_to_wordpress(image_url, video_id):
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Type": img_res.headers.get("Content-Type", "image/jpeg")
             }
-            upload_res = requests.post(media_endpoint, headers=media_headers, data=media_headers, timeout=15)
+            # FIXED: Sending actual downloaded image bytes
+            upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
             if upload_res.status_code in [200, 201]:
                 media_id = upload_res.json().get("id")
+                print(f"=== Featured Image Uploaded: Media ID {media_id} ===")
                 return media_id
+            else:
+                print(f"Media Upload Error {upload_res.status_code}: {upload_res.text[:150]}")
     except Exception as e:
         print(f"Thumbnail upload exception: {e}")
     return None
 
 def post_to_wordpress(title, video_id):
-    """Accepts the verified video_id directly to guarantee consistency."""
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -117,7 +119,6 @@ def post_to_wordpress(title, video_id):
     thumb_url = get_youtube_thumbnail_url(video_id)
     featured_media_id = upload_thumbnail_to_wordpress(thumb_url, video_id)
 
-    # Embed the EXACT video_id in content, excerpt, and slug
     body = {
         "title": title,
         "slug": f"{clean_slug}-{video_id.lower()}",
@@ -153,20 +154,17 @@ def run_video_pipeline():
         summary = getattr(entry, 'summary', '')
         guid = getattr(entry, 'id', '')
 
-        # Extract ID from all potential RSS elements
         video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
         
         if not video_id:
             continue
 
-        # STRICT CHECK USING THE EXACT EXTRACTED ID
         if is_already_published_in_wp(video_id):
             print(f"SKIPPING: '{entry_title}' ({video_id}) is already published on WP.")
             continue
 
         print(f"POSTING NEW VIDEO: {entry_title} ({video_id})")
         
-        # Pass video_id directly to guarantee the same ID is written to WP
         if post_to_wordpress(entry_title, video_id):
             print(f"Successfully published: {entry_title}")
             break
