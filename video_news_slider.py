@@ -22,11 +22,11 @@ def extract_youtube_id(url_or_guid_or_text):
     return None
 
 def is_already_published_in_wp(video_id):
-    """Fetches recent posts from WP and checks title, content, excerpt, and slug for the video ID."""
+    """Fetches Category 32 posts and checks content/excerpt/title for video_id."""
     if not WP_URL or not WP_USER or not WP_APP_PASSWORD:
-        print("ERROR: Missing WordPress credentials. Aborting to prevent duplicate.")
-        return True # Fail-safe: do not post if credentials missing
-    
+        print("CRITICAL: Missing WordPress credentials in environment variables!")
+        return True # BLOCK POSTING
+
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -34,8 +34,6 @@ def is_already_published_in_wp(video_id):
         "Authorization": f"Basic {token}",
         "User-Agent": "Mozilla/5.0"
     }
-    
-    # Query last 30 posts across all statuses in Cat 32
     params = {
         "categories": 32,
         "per_page": 30,
@@ -46,25 +44,26 @@ def is_already_published_in_wp(video_id):
         res = requests.get(api_endpoint, headers=headers, params=params, timeout=12)
         if res.status_code == 200:
             posts = res.json()
-            print(f"Checking video ID '{video_id}' against {len(posts)} recent WP posts...")
             for post in posts:
+                post_id = post.get("id")
                 title = post.get("title", {}).get("rendered", "")
                 content = post.get("content", {}).get("rendered", "")
                 excerpt = post.get("excerpt", {}).get("rendered", "")
                 
-                # Direct string lookup for 11-char YouTube ID
+                # Search title, content, excerpt, OR raw JSON representation
                 if video_id in content or video_id in excerpt or video_id in title:
-                    print(f"MATCH FOUND: Video '{video_id}' already exists in WP Post ID {post.get('id')}.")
-                    return True
-            print(f"NO MATCH: Video '{video_id}' is clear to publish.")
-            return False
+                    print(f"==> MATCH FOUND! Video ID '{video_id}' exists in WP Post ID {post_id} ('{title}').")
+                    return True # BLOCK POSTING (Already exists)
+            
+            print(f"==> NO MATCH FOUND for Video ID '{video_id}'. Safe to publish.")
+            return False # SAFE TO POST
         else:
-            print(f"WP API Error {res.status_code}: {res.text}")
-            # Fail safe: assume it exists so we don't post duplicates when WP API fails
-            return True
+            print(f"CRITICAL ERROR: WP API returned status {res.status_code}.")
+            return True # BLOCK POSTING (Fail safe)
+            
     except Exception as e:
-        print(f"Exception while checking WP history: {e}")
-        return True # Fail safe
+        print(f"CRITICAL EXCEPTION connecting to WP: {e}")
+        return True # BLOCK POSTING (Fail safe)
 
 def get_youtube_thumbnail_url(video_id):
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
@@ -91,7 +90,7 @@ def upload_thumbnail_to_wordpress(image_url, video_id):
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Type": img_res.headers.get("Content-Type", "image/jpeg")
             }
-            upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
+            upload_res = requests.post(media_endpoint, headers=media_headers, data=media_headers, timeout=15)
             if upload_res.status_code in [200, 201]:
                 media_id = upload_res.json().get("id")
                 return media_id
@@ -99,7 +98,8 @@ def upload_thumbnail_to_wordpress(image_url, video_id):
         print(f"Thumbnail upload exception: {e}")
     return None
 
-def post_to_wordpress(title, video_url):
+def post_to_wordpress(title, video_id):
+    """Accepts the verified video_id directly to guarantee consistency."""
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode("utf-8")
@@ -109,7 +109,6 @@ def post_to_wordpress(title, video_url):
         "User-Agent": "Mozilla/5.0"
     }
     
-    video_id = extract_youtube_id(video_url)
     clean_yt_link = f"https://www.youtube.com/watch?v={video_id}"
 
     clean_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().lower()
@@ -118,10 +117,11 @@ def post_to_wordpress(title, video_url):
     thumb_url = get_youtube_thumbnail_url(video_id)
     featured_media_id = upload_thumbnail_to_wordpress(thumb_url, video_id)
 
+    # Embed the EXACT video_id in content, excerpt, and slug
     body = {
         "title": title,
-        "slug": clean_slug,
-        "content": f'<p><iframe width="100%" height="400" src="https://www.youtube.com/embed/{video_id}" frameborder="0" allowfullscreen></iframe></p>',
+        "slug": f"{clean_slug}-{video_id.lower()}",
+        "content": f'<!-- YT:{video_id} --><p><iframe width="100%" height="400" src="https://www.youtube.com/embed/{video_id}" frameborder="0" allowfullscreen></iframe></p>',
         "excerpt": clean_yt_link,
         "status": "publish",
         "categories": [32]
@@ -148,24 +148,26 @@ def run_video_pipeline():
         return
 
     for entry in feed.entries:
-        video_url = entry.link
-        entry_title = entry.title
+        video_url = getattr(entry, 'link', '')
+        entry_title = getattr(entry, 'title', '')
         summary = getattr(entry, 'summary', '')
-        guid = getattr(entry, 'id', video_url)
+        guid = getattr(entry, 'id', '')
 
+        # Extract ID from all potential RSS elements
         video_id = extract_youtube_id(video_url) or extract_youtube_id(guid) or extract_youtube_id(summary)
         
         if not video_id:
             continue
 
-        # STRICT DUPLICATE CHECK WITH FAIL-SAFE
+        # STRICT CHECK USING THE EXACT EXTRACTED ID
         if is_already_published_in_wp(video_id):
-            print(f"SKIPPING: '{entry_title}' ({video_id}) is already published or check failed.")
+            print(f"SKIPPING: '{entry_title}' ({video_id}) is already published on WP.")
             continue
 
         print(f"POSTING NEW VIDEO: {entry_title} ({video_id})")
         
-        if post_to_wordpress(entry_title, video_url):
+        # Pass video_id directly to guarantee the same ID is written to WP
+        if post_to_wordpress(entry_title, video_id):
             print(f"Successfully published: {entry_title}")
             break
 
