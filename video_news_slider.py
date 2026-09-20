@@ -39,7 +39,7 @@ def extract_youtube_id(url_or_guid_or_text):
     return None
 
 def is_already_published_in_wp(video_id):
-    """Directly queries WordPress REST API to check if video ID exists in Category 32."""
+    """Fetches recent Category 32 posts and directly checks if video_id exists in their content/excerpt."""
     if not WP_URL or not WP_USER or not WP_APP_PASSWORD:
         return False
     
@@ -50,16 +50,22 @@ def is_already_published_in_wp(video_id):
         "Authorization": f"Basic {token}",
         "User-Agent": "Mozilla/5.0"
     }
+    # Get the last 30 published posts from Category 32
     params = {
-        "search": video_id,
         "categories": 32,
-        "per_page": 1
+        "per_page": 30,
+        "status": "publish"
     }
     try:
         res = requests.get(api_endpoint, headers=headers, params=params, timeout=10)
         if res.status_code == 200:
             posts = res.json()
-            return len(posts) > 0  # Returns True if a matching post exists on WordPress
+            for post in posts:
+                # Check if the 11-character video_id is inside content or excerpt string
+                content_raw = post.get("content", {}).get("rendered", "")
+                excerpt_raw = post.get("excerpt", {}).get("rendered", "")
+                if video_id in content_raw or video_id in excerpt_raw:
+                    return True  # Found match!
     except Exception as e:
         print(f"Error checking WP history: {e}")
     return False
@@ -161,9 +167,9 @@ def run_video_pipeline():
         if not video_id:
             continue
 
-        # Check local history file AND live WordPress database
-        if video_id in history or is_already_published_in_wp(video_id):
-            print(f"Skipping: '{entry_title}' ({video_id}) is already published.")
+        # DIRECT WORDPRESS RAW STRING CHECK
+        if is_already_published_in_wp(video_id):
+            print(f"Skipping: '{entry_title}' ({video_id}) is already published on WordPress.")
             continue
 
         print(f"Posting Video with Featured Image: {entry_title} ({video_id})")
