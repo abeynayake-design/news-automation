@@ -67,7 +67,7 @@ def is_semantic_duplicate(new_title, new_summary, recent_titles):
         
     client = genai.Client(api_key=GEMINI_API_KEY.strip())
     
-    recent_list_str = "\n".join([f"- {t}" for t in recent_titles[:20]])
+    recent_list_str = "\n".join([f"- {t}" for t in recent_titles[:25]])
     prompt = f"""
     You are a strict news editor screening incoming stories for duplicate coverage.
     
@@ -118,8 +118,8 @@ def resolve_google_url(google_url):
 
 def check_entry_date(entry, raw_html_downloaded):
     """
-    Validates publication year to block old recycled stories (e.g., 2015 news indexed recently).
-    Returns False if article is older than CURRENT_YEAR.
+    Validates publication year to block old recycled stories (e.g. 2015/2018 news indexed recently).
+    Allows current year articles, recent stories, and undated fresh content.
     """
     # 1. Check RSS Feed Publication Date
     if hasattr(entry, 'published_parsed') and entry.published_parsed:
@@ -210,30 +210,34 @@ def rewrite_with_gemini(raw_text, original_title):
     client = genai.Client(api_key=GEMINI_API_KEY.strip())
     
     prompt = f"""
-    You are an exceptionally accurate, zero-hallucination senior news editor.
-    Your task is to rewrite the raw source text into a precise, highly engaging, and clear news article.
+    You are an expert senior news editor writing for an independent publication called BrunchPress.
+    Your objective is to craft a rich, engaging, polished, and comprehensive news article based on the provided source text.
 
-    STRICT ACCURACY RULES:
-    1. ZERO HALLUCINATIONS: Rely ONLY on facts explicitly stated in the source text below. NEVER guess, assume, or insert names, titles, former officials, or unverified facts from your own memory/training. If a name (e.g. Speaker of Parliament) is not explicitly written in the provided text, DO NOT invent or mention one.
-    2. ABSOLUTE WHO, WHAT, WHEN, WHERE, WHY REQUIREMENT:
-       - Every person, expert, or official named in the text MUST be explicitly identified by FULL NAME in the output text (e.g., if "Ansley de Silva" or any specific name is mentioned, you MUST include their exact name). Never omit names mentioned in the text.
-       - Ensure all key parameters are clearly stated: WHO is involved, WHAT took place, WHERE it happened, WHEN it took place, and WHY it matters.
-    3. DATE-LINE GUARDRAIL:
-       - Examine the raw text for datelines or publication years. If the story refers to historical events from past years (e.g. 2015) as current events, or if it is an outdated article, output EXACTLY the following JSON object:
+    EDITORIAL & ACCURACY MANDATES:
+    1. NO SOURCE ATTRIBUTION OR CITATIONS:
+       - NEVER write "according to [Website]", "reported by [Publication]", "as stated in [Outlet]", or include any external URLs/domains. Write as an original, authoritative BrunchPress news report.
+    2. ZERO HALLUCINATIONS OR INVENTED NAMES:
+       - Rely strictly on the facts provided in the raw text below.
+       - NEVER invent, guess, or insert names, titles, former officials, or unverified background details (e.g. do not guess the Speaker of Parliament or invent historical figures).
+    3. COMPLETE ENTITY INTEGRATION & RICH NARRATIVE:
+       - Include every specific name, expert, location, figure, date, and detail provided in the source text (e.g. if a name like "Ansley de Silva" appears, it MUST be featured in the narrative).
+       - Do NOT make the article brief, dry, or juvenile. Weave a full, fluid, professional news story (3 to 5 well-developed paragraphs) covering the background, context, implications, and key parameters (Who, What, When, Where, Why).
+    4. HISTORICAL CONTENT FILTER:
+       - If the raw text is clearly an old historical story from past years (e.g., elections from 2015 or old events), output EXACTLY:
          {{"title": "SERVER ERROR", "content": "SERVER ERROR", "image_query": "none"}}
 
-    FORMATTING RULES:
-    - Return ONLY a raw JSON object without markdown formatting tags (no ```json or ```).
-    - Expected output schema when valid:
+    FORMATTING REQUIREMENTS:
+    - Return ONLY a raw JSON object without markdown code blocks (do NOT use ```json or ```).
+    - JSON Schema:
       {{
-        "title": "A compelling headline based purely on source facts",
-        "content": "<p>Introductory paragraph covering the core 5 Ws...</p><h2>Key Highlights</h2><ul><li>Fact 1</li><li>Fact 2</li></ul><p>Detailed body content with exact names, dates, and locations...</p>",
-        "image_query": "2 to 3 concise English keywords for stock photo search"
+        "title": "A strong, engaging, professional news headline",
+        "content": "<p>Comprehensive opening paragraph weaving together the core story, key figures, and immediate context...</p><p>Detailed body paragraphs expanding on background, facts, and specifics...</p><h2>Key Developments</h2><ul><li>Detailed takeaway 1</li><li>Detailed takeaway 2</li></ul><p>Concluding paragraph on significance and forward outlook...</p>",
+        "image_query": "2 to 3 concise English keywords for stock photo lookup"
       }}
 
     Original Title: {original_title}
-    Raw Text:
-    {raw_text[:4000]}
+    Raw Source Text:
+    {raw_text[:4500]}
     """
     
     response = client.models.generate_content(
@@ -313,7 +317,7 @@ def run_pipeline():
         
         raw_text, raw_html = extract_article_content(target_url)
         
-        # 4. Strict Date Check (Filtering out old articles indexed by search engines)
+        # 4. Strict Date Check (Blocks old archived stories from past years)
         if not check_entry_date(entry, raw_html):
             print(f"Discarding outdated article: '{entry_title}'")
             save_to_history(raw_url)
@@ -329,9 +333,9 @@ def run_pipeline():
             print(f"Gemini processing error: {e}")
             continue
 
-        # 5. SERVER ERROR / Old Article Gatekeeper
+        # 5. SERVER ERROR Gatekeeper
         if article_data.get("title") == "SERVER ERROR" or article_data.get("content") == "SERVER ERROR":
-            print(f"SERVER ERROR triggered for '{entry_title}'. Story discarded due to date mismatch or validation error.")
+            print(f"SERVER ERROR triggered for '{entry_title}'. Story discarded due to historical date mismatch.")
             save_to_history(raw_url)
             continue
             
@@ -347,7 +351,7 @@ def run_pipeline():
         if success:
             save_to_history(raw_url)
             recent_wp_titles.insert(0, article_data["title"])  # Update local memory
-            print("Successfully published unique article with Pexels photo!")
+            print("Successfully published unique, fleshed-out article!")
             break 
             
         processed_count += 1
