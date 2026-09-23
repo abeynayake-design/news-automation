@@ -1,0 +1,31 @@
+name: Hero Slider Video Automation
+
+on:
+  schedule:
+    # Runs every 3 hours automatically
+    - cron: '0 */3 * * *'
+  workflow_dispatch: # Enables manual "Run workflow" button in GitHub Actions tab
+
+jobs:
+  run-hero-slider:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests feedparser
+
+      - name: Execute Hero Slider Script
+        env:
+          WP_URL: ${{ secrets.WP_URL }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+        run: python hero_slider.py
