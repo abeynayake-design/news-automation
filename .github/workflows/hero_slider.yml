@@ -2,8 +2,8 @@ name: Hero Slider Video Automation
 
 on:
   schedule:
-    # Runs every 3 hours automatically
-    - cron: '0 */3 * * *'
+    # Runs every 40 minutes automatically
+    - cron: '*/40 * * * *'
   workflow_dispatch: # Enables manual "Run workflow" button in GitHub Actions tab
 
 jobs:
