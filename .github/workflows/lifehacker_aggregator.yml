@@ -1,0 +1,43 @@
+name: Lifehacker Content Aggregator
+
+on:
+  schedule:
+    # Runs every 15 mins between 12:30 UTC and 20:30 UTC
+    # (Equivalent to 6:00 PM - 2:00 AM Sri Lanka Time)
+    - cron: '15,30,45 12 * * *'
+    - cron: '*/15 13-20 * * *'
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+
+jobs:
+  run-aggregator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests feedparser google-genai
+
+      - name: Execute Lifehacker Aggregator Script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WP_URL: ${{ secrets.WP_URL }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: python lifehacker_aggregator.py
+
+      - name: Commit Updated History Log
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add lifehacker_history.txt || true
+          git commit -m "Update Lifehacker history log" || true
+          git push || true
