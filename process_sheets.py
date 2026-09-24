@@ -3,6 +3,7 @@ import json
 import base64
 import requests
 import trafilatura
+from bs4 import BeautifulSoup
 from google import genai
 import gspread
 from google.oauth2.service_account import Credentials
@@ -50,29 +51,50 @@ def fetch_urls_from_private_sheet():
         for cell in row:
             cell_clean = cell.strip()
             if cell_clean.startswith("http://") or cell_clean.startswith("https://"):
-                urls.append(cell_clean)
+                # Clean tracking parameters that interfere with FT.lk / AdaDerana
+                clean_url = cell_clean.split("?")[0]
+                urls.append(clean_url)
                 
     print(f"=== STEP 1 DEBUG: Found {len(urls)} URLs in Google Sheet ===")
     return urls
 
 def extract_article_content(url):
+    """
+    Robust scraper with custom BeautifulSoup fallback for ft.lk and adaderana.lk
+    to handle custom DOM layouts and ad containers.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+    
     try:
-        # Use 'requests' with a standard browser User-Agent to fetch raw HTML safely
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
         response = requests.get(url, headers=headers, timeout=12)
         
         if response.status_code == 200:
-            # Pass raw HTML string into Trafilatura to extract main article body
+            # 1. Primary: Trafilatura Extraction
             extracted_text = trafilatura.extract(response.text)
-            if extracted_text:
-                print(f"=== STEP 2 DEBUG: Extracted {len(extracted_text)} characters from {url} ===")
+            if extracted_text and len(extracted_text.strip()) > 150:
+                print(f"=== STEP 2 DEBUG: Trafilatura extracted {len(extracted_text)} chars from {url} ===")
                 return extracted_text
+
+            # 2. Secondary: BeautifulSoup Fallback for AdaDerana / FT.lk
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Remove scripts, style sheets, and header/footer noise
+            for element in soup(["script", "style", "iframe", "header", "footer", "nav", "aside"]):
+                element.decompose()
+
+            paragraphs = soup.find_all('p')
+            body_text = "\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 20])
+            
+            if len(body_text) > 150:
+                print(f"=== STEP 2 DEBUG: BeautifulSoup extracted {len(body_text)} chars from {url} ===")
+                return body_text
         else:
             print(f"=== STEP 2 DEBUG: HTTP {response.status_code} error fetching {url} ===")
             
-        print(f"=== STEP 2 DEBUG: Trafilatura returned EMPTY text for {url} ===")
+        print(f"=== STEP 2 DEBUG: Extraction returned EMPTY text for {url} ===")
     except Exception as e:
         print(f"=== STEP 2 DEBUG: Extraction error for {url}: {e} ===")
     return None
@@ -118,17 +140,22 @@ def upload_image_to_wordpress(image_url):
 def rewrite_with_gemini(raw_text, target_url):
     client = genai.Client(api_key=GEMINI_API_KEY.strip())
     prompt = f"""
-    You are an expert news editor. Rewrite the following article text extracted from URL ({target_url}) into a clear, professional, engaging news report.
-    
+    You are an expert senior news editor writing for BrunchPress. Rewrite the following article text extracted from URL ({target_url}) into a clear, professional, engaging news report.
+
+    EDITORIAL MANDATES:
+    1. NO SOURCE ATTRIBUTION: Never write "according to [Website]" or mention external outlets/URLs.
+    2. ZERO HALLUCINATIONS: Rely strictly on provided facts.
+    3. COMPLETE ENTITY INTEGRATION: Include all full names, places, and facts mentioned.
+
     Formatting rules:
     - Return ONLY a raw JSON object. Do not include markdown tags like ```json.
     - Fields required:
       "title": "A compelling headline"
-      "content": "<p>Introductory paragraph...</p><h2>Key Highlights</h2><ul><li>Point 1</li><li>Point 2</li></ul><p>Detailed body content...</p>"
+      "content": "<p>Comprehensive opening paragraph...</p><p>Detailed body paragraphs...</p><h2>Key Developments</h2><ul><li>Point 1</li><li>Point 2</li></ul><p>Concluding paragraph...</p>"
       "image_query": "2 to 3 concise English keywords for stock photo search"
 
     Raw Article Text:
-    {raw_text[:3500]}
+    {raw_text[:4500]}
     """
     response = client.models.generate_content(model="gemini-3.6-flash", contents=prompt)
     response_text = response.text.strip()
@@ -147,7 +174,12 @@ def post_to_wordpress(title, content_html, featured_media_id=None):
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    body = {"title": title, "content": content_html, "status": "publish"}
+    body = {
+        "title": title, 
+        "content": content_html, 
+        "status": "publish",
+        "categories": [18]  # Assigns to Category 18 while appearing on Front Page
+    }
     if featured_media_id:
         body["featured_media"] = featured_media_id
         
@@ -167,16 +199,17 @@ def run_sheets_pipeline():
         return
 
     processed_count = 0
+    # Increased batch processing limit to 5 URLs per workflow run
     for url in urls:
-        if processed_count >= 3:
-            print("Batch limit of 3 reached.")
+        if processed_count >= 5:
+            print("Batch target limit of 5 stories reached.")
             break
             
         if url in history:
             print(f"=== DEBUG: Skipping already processed URL: {url} ===")
             continue
 
-        print(f"\nProcessing URL: {url}")
+        print(f"\nProcessing URL ({processed_count + 1}/5): {url}")
         raw_text = extract_article_content(url)
         
         # Do NOT save URL to history if scraping yielded empty text
@@ -199,7 +232,7 @@ def run_sheets_pipeline():
         if post_to_wordpress(article_data["title"], article_data["content"], featured_media_id=media_id):
             save_to_history(url)
             processed_count += 1
-            print(f"=== STEP 3 SUCCESS: Published '{article_data['title']}' to WordPress! ===")
+            print(f"=== STEP 3 SUCCESS: Published story {processed_count}/5 ('{article_data['title']}') to WordPress! ===")
 
 if __name__ == "__main__":
     run_sheets_pipeline()
