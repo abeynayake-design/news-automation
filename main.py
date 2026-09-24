@@ -1,9 +1,11 @@
 import os
+import re
 import json
 import base64
 import requests
 import feedparser
 import trafilatura
+from bs4 import BeautifulSoup
 from datetime import datetime
 from difflib import SequenceMatcher
 from google import genai
@@ -105,30 +107,30 @@ def is_semantic_duplicate(new_title, new_summary, recent_titles):
     return False
 
 def resolve_google_url(google_url):
+    """Resolves redirected Google News URLs and cleans tracking parameters."""
     try:
         session = requests.Session()
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
-        res = session.get(google_url, allow_redirects=True, timeout=5)
-        return res.url
+        res = session.get(google_url, allow_redirects=True, timeout=8)
+        clean_url = res.url.split("?")[0]  # Strips tracking query parameters
+        return clean_url
     except Exception as e:
         print(f"URL resolve fallback used: {e}")
-        return google_url
+        return google_url.split("?")[0]
 
 def check_entry_date(entry, raw_html_downloaded):
     """
     Validates publication year to block old recycled stories (e.g. 2015/2018 news indexed recently).
     Allows current year articles, recent stories, and undated fresh content.
     """
-    # 1. Check RSS Feed Publication Date
     if hasattr(entry, 'published_parsed') and entry.published_parsed:
         pub_year = entry.published_parsed.tm_year
         if pub_year < CURRENT_YEAR:
             print(f"Date Check Failed: RSS publication year is {pub_year} (Older than {CURRENT_YEAR}).")
             return False
 
-    # 2. Extract Metadata Date from Article Body via Trafilatura
     if raw_html_downloaded:
         metadata = trafilatura.extract_metadata(raw_html_downloaded)
         if metadata and metadata.date:
@@ -144,13 +146,42 @@ def check_entry_date(entry, raw_html_downloaded):
     return True
 
 def extract_article_content(url):
+    """
+    Robust scraper featuring trafilatura + custom BeautifulSoup fallback for 
+    sites like ft.lk and adaderana.lk to bypass ad pop-ups and custom structures.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+    
     try:
+        # Primary: Trafilatura Extraction
         downloaded = trafilatura.fetch_url(url)
         if downloaded:
             text_content = trafilatura.extract(downloaded)
-            return text_content, downloaded
+            if text_content and len(text_content.strip()) > 150:
+                return text_content, downloaded
+
+        # Secondary: BeautifulSoup Fallback for AdaDerana / FT.lk
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            # Remove scripts, styles, and headers/footers
+            for element in soup(["script", "style", "iframe", "header", "footer", "nav", "aside"]):
+                element.decompose()
+
+            paragraphs = soup.find_all('p')
+            body_text = "\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 20])
+            
+            if len(body_text) > 150:
+                print(f"BeautifulSoup fallback extracted content for: {url}")
+                return body_text, res.text
+
     except Exception as e:
-        print(f"Extraction error: {e}")
+        print(f"Extraction error for {url}: {e}")
+        
     return None, None
 
 def get_pexels_image_url(search_query):
@@ -190,7 +221,7 @@ def upload_image_to_wordpress(image_url):
             media_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
             media_headers = {
                 "Authorization": f"Basic {token}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Type": img_res.headers.get("Content-Type", "image/jpeg")
             }
@@ -267,7 +298,8 @@ def post_to_wordpress(title, content_html, featured_media_id=None):
     body = {
         "title": title,
         "content": content_html,
-        "status": "publish"
+        "status": "publish",
+        "categories": [18]  # Assigns to Category 18 while appearing on Front Page automatically
     }
     
     if featured_media_id:
@@ -275,7 +307,7 @@ def post_to_wordpress(title, content_html, featured_media_id=None):
     
     res = requests.post(api_endpoint, headers=headers, json=body, timeout=10)
     if res.status_code in [200, 201]:
-        print(f"Successfully published: {title}")
+        print(f"Successfully published to Category 18 & Front Page: {title}")
         return True
     else:
         print(f"Failed to publish. Status: {res.status_code}, Response: {res.text}")
@@ -289,9 +321,10 @@ def run_pipeline():
     print(f"Found {len(feed.entries)} items in feed. Fetched {len(recent_wp_titles)} recent titles from WordPress.")
     
     processed_count = 0
+    # Process up to 5 unique stories per execution run
     for entry in feed.entries:
-        if processed_count >= 3:
-            print("Batch limit of 3 reached. Ending run.")
+        if processed_count >= 5:
+            print("Batch target of 5 stories reached. Ending run.")
             break
 
         raw_url = entry.link
@@ -312,7 +345,7 @@ def run_pipeline():
             save_to_history(raw_url)
             continue
             
-        print(f"\nProcessing unique story: {entry_title}")
+        print(f"\nProcessing unique story ({processed_count + 1}/5): {entry_title}")
         target_url = resolve_google_url(raw_url)
         
         raw_text, raw_html = extract_article_content(target_url)
@@ -350,11 +383,9 @@ def run_pipeline():
         success = post_to_wordpress(article_data["title"], article_data["content"], featured_media_id=media_id)
         if success:
             save_to_history(raw_url)
-            recent_wp_titles.insert(0, article_data["title"])  # Update local memory
-            print("Successfully published unique, fleshed-out article!")
-            break 
-            
-        processed_count += 1
+            recent_wp_titles.insert(0, article_data["title"])  # Update local duplicate memory
+            processed_count += 1
+            print(f"Successfully published story {processed_count}/5!")
 
 if __name__ == "__main__":
     run_pipeline()
