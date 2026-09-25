@@ -12,6 +12,19 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 # Hero Slider (Scenic Feature Videos) RSS Feed
 YOUTUBE_RSS_URL = "https://rss.app/feeds/nMj6We403j7SPWZp.xml"
 HERO_CATEGORY_ID = 30  # Category 30 for Hero Slider
+HISTORY_FILE = "published_history.txt"
+
+def load_history():
+    """Loads previously processed Video IDs or URLs from local history log."""
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            return set(line.strip() for line in f if line.strip())
+    return set()
+
+def save_to_history(video_id):
+    """Saves YouTube Video ID to local history log permanently (prevents reposting deleted videos)."""
+    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{video_id}\n")
 
 def extract_youtube_id(url_or_guid_or_text):
     patterns = [
@@ -53,10 +66,9 @@ def is_already_published_in_wp(video_id):
                 excerpt = post.get("excerpt", {}).get("rendered", "")
                 
                 if video_id in content or video_id in excerpt or video_id in title:
-                    print(f"==> HERO SLIDER MATCH FOUND! Video ID '{video_id}' exists in WP Post ID {post_id} ('{title}').")
+                    print(f"==> HERO SLIDER WP MATCH: Video ID '{video_id}' exists in WP Post ID {post_id} ('{title}').")
                     return True  # BLOCK POSTING
             
-            print(f"==> NO MATCH FOUND for Hero Video ID '{video_id}'. Safe to publish.")
             return False  # SAFE TO POST
         else:
             print(f"CRITICAL ERROR: WP API returned status {res.status_code}.")
@@ -136,6 +148,7 @@ def post_to_wordpress(title, video_id):
     return res.status_code in [200, 201]
 
 def run_hero_pipeline():
+    history = load_history()
     headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
@@ -160,13 +173,21 @@ def run_hero_pipeline():
         if not video_id:
             continue
 
+        # 1. Check permanent local history log (Blocks deleted videos)
+        if video_id in history:
+            print(f"SKIPPING HERO VIDEO: '{entry_title}' ({video_id}) exists in permanent local history log.")
+            continue
+
+        # 2. Check active WordPress posts (Backup check)
         if is_already_published_in_wp(video_id):
+            save_to_history(video_id)
             print(f"SKIPPING HERO VIDEO: '{entry_title}' ({video_id}) is already published in Category 30.")
             continue
 
         print(f"POSTING NEW HERO VIDEO: {entry_title} ({video_id})")
         
         if post_to_wordpress(entry_title, video_id):
+            save_to_history(video_id)
             print(f"Successfully published to Hero Slider: {entry_title}")
             break
 
