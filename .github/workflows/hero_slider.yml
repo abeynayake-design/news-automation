@@ -1,19 +1,21 @@
-name: Hero Slider Video Automation
+name: Hero Video Slider Pipeline
 
 on:
   schedule:
-    # Runs every 40 minutes automatically
-    - cron: '*/40 * * * *'
-  workflow_dispatch: # Enables manual "Run workflow" button in GitHub Actions tab
+    - cron: '20 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-hero-slider:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout Repository Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set Up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
@@ -29,3 +31,10 @@ jobs:
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
         run: python hero_slider.py
+
+      - name: Commit & Push History Updates
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add published_history.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update published history [skip ci]" && git push)
