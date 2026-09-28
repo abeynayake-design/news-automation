@@ -35,8 +35,8 @@ def fetch_urls_from_private_sheet():
         
     creds_dict = json.loads(GOOGLE_CREDENTIALS)
     scopes = [
-        "https://www.googleapis.com/auth/spreadsheets.readonly",
-        "https://www.googleapis.com/auth/drive.readonly"
+        "[https://www.googleapis.com/auth/spreadsheets.readonly](https://www.googleapis.com/auth/spreadsheets.readonly)",
+        "[https://www.googleapis.com/auth/drive.readonly](https://www.googleapis.com/auth/drive.readonly)"
     ]
     
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -51,7 +51,6 @@ def fetch_urls_from_private_sheet():
         for cell in row:
             cell_clean = cell.strip()
             if cell_clean.startswith("http://") or cell_clean.startswith("https://"):
-                # Clean tracking parameters that interfere with FT.lk / AdaDerana
                 clean_url = cell_clean.split("?")[0]
                 urls.append(clean_url)
                 
@@ -60,8 +59,7 @@ def fetch_urls_from_private_sheet():
 
 def extract_article_content(url):
     """
-    Robust scraper with custom BeautifulSoup fallback for ft.lk and adaderana.lk
-    to handle custom DOM layouts and ad containers.
+    Robust scraper with custom BeautifulSoup fallback for ft.lk and adaderana.lk.
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -72,16 +70,12 @@ def extract_article_content(url):
         response = requests.get(url, headers=headers, timeout=12)
         
         if response.status_code == 200:
-            # 1. Primary: Trafilatura Extraction
             extracted_text = trafilatura.extract(response.text)
             if extracted_text and len(extracted_text.strip()) > 150:
                 print(f"=== STEP 2 DEBUG: Trafilatura extracted {len(extracted_text)} chars from {url} ===")
                 return extracted_text
 
-            # 2. Secondary: BeautifulSoup Fallback for AdaDerana / FT.lk
             soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Remove scripts, style sheets, and header/footer noise
             for element in soup(["script", "style", "iframe", "header", "footer", "nav", "aside"]):
                 element.decompose()
 
@@ -104,7 +98,7 @@ def get_pexels_image_url(search_query):
         return None
     try:
         headers = {"Authorization": PEXELS_API_KEY}
-        url = f"https://api.pexels.com/v1/search?query={search_query}&per_page=1&orientation=landscape"
+        url = f"[https://api.pexels.com/v1/search?query=](https://api.pexels.com/v1/search?query=){search_query}&per_page=1&orientation=landscape"
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             photos = res.json().get("photos", [])
@@ -157,7 +151,7 @@ def rewrite_with_gemini(raw_text, target_url):
     Raw Article Text:
     {raw_text[:4500]}
     """
-    response = client.models.generate_content(model="gemini-3.6-flash", contents=prompt)
+    response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
     response_text = response.text.strip()
     if response_text.startswith("```json"):
         response_text = response_text[7:-3].strip()
@@ -178,7 +172,7 @@ def post_to_wordpress(title, content_html, featured_media_id=None):
         "title": title, 
         "content": content_html, 
         "status": "publish",
-        "categories": [18]  # Assigns to Category 18 while appearing on Front Page
+        "categories": [18]  # Category 18
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
@@ -199,7 +193,6 @@ def run_sheets_pipeline():
         return
 
     processed_count = 0
-    # Increased batch processing limit to 5 URLs per workflow run
     for url in urls:
         if processed_count >= 5:
             print("Batch target limit of 5 stories reached.")
@@ -212,7 +205,6 @@ def run_sheets_pipeline():
         print(f"\nProcessing URL ({processed_count + 1}/5): {url}")
         raw_text = extract_article_content(url)
         
-        # Do NOT save URL to history if scraping yielded empty text
         if not raw_text or len(raw_text) < 100:
             print(f"=== STEP 2 WARNING: Could not extract readable text for {url}. Skipping without saving to history. ===")
             continue
