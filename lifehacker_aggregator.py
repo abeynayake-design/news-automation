@@ -18,16 +18,23 @@ HISTORY_FILE = "lifehacker_history.txt"
 WP_CATEGORY_ID = 42  # Category 42 for Lifehacker Aggregation
 
 def load_history():
-    """Loads previously processed Lifehacker URLs."""
+    """Loads previously processed Lifehacker URLs and GUIDs."""
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
             return set(line.strip() for line in f if line.strip())
     return set()
 
-def save_to_history(entry_url):
-    """Saves published URL to local history log."""
+def save_to_history(entry_identifier):
+    """Saves published URL/GUID to local history log."""
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{entry_url}\n")
+        f.write(f"{entry_identifier}\n")
+
+def clean_url(raw_url):
+    """Strips query parameters and trailing slashes for robust deduplication."""
+    if not raw_url:
+        return ""
+    clean = raw_url.split("?")[0].split("#")[0].strip().rstrip("/")
+    return clean
 
 def get_pexels_image_url(search_query):
     """
@@ -40,7 +47,6 @@ def get_pexels_image_url(search_query):
 
     try:
         headers = {"Authorization": PEXELS_API_KEY}
-        # Fetch top 5 photos instead of 1 to allow selection diversity
         url = f"https://api.pexels.com/v1/search?query={search_query}&per_page=5&orientation=landscape"
         res = requests.get(url, headers=headers, timeout=10)
         
@@ -48,15 +54,13 @@ def get_pexels_image_url(search_query):
             data = res.json()
             photos = data.get("photos", [])
             if photos:
-                # Randomly pick from the top results to avoid repetition
                 selected_photo = random.choice(photos)
                 image_url = selected_photo["src"]["large"]
                 print(f"Pexels image found for '{search_query}': {image_url}")
                 return image_url
             else:
                 print(f"No Pexels photos found for query: '{search_query}'. Trying fallback...")
-                # Fallback search if specific query yields 0 results
-                fallback_url = f"https://api.pexels.com/v1/search?query=workspace productivity&per_page=5&orientation=landscape"
+                fallback_url = "https://api.pexels.com/v1/search?query=workspace productivity&per_page=5&orientation=landscape"
                 fallback_res = requests.get(fallback_url, headers=headers, timeout=10)
                 if fallback_res.status_code == 200:
                     fallback_photos = fallback_res.json().get("photos", [])
@@ -101,7 +105,7 @@ def upload_image_to_wordpress(image_url):
 def generate_teaser_and_image_prompt(original_title, original_summary):
     """
     Uses Gemini to generate an engaging short teaser and highly specific, 
-    visually descriptive Pexels search terms (adapted from Make.com prompt logic).
+    visually descriptive Pexels search terms.
     """
     client = genai.Client(api_key=GEMINI_API_KEY.strip())
     
@@ -148,10 +152,8 @@ def post_to_wordpress(title, original_url, teaser_text, featured_media_id=None):
         "User-Agent": "Mozilla/5.0"
     }
     
-    # Enforces the mandatory title prefix
     prefixed_headline = f"From LifeHacker site: {title}"
 
-    # Formats article body with teaser and direct link button to Lifehacker
     content_html = f"""
     <p>{teaser_text}</p>
     <p style="margin-top: 20px;">
@@ -188,15 +190,18 @@ def run_pipeline():
     processed_count = 0
     for entry in feed.entries:
         if processed_count >= 2:
-            print("Batch limit reached. Ending run.")
+            print("Batch limit of 2 new stories reached. Ending run.")
             break
 
         original_url = entry.link
+        normalized_url = clean_url(original_url)
+        entry_guid = getattr(entry, 'id', '')
         entry_title = entry.title
         summary = getattr(entry, 'summary', '')
 
-        # URL History Check
-        if original_url in history:
+        # Robust Deduplication Check: Checks raw URL, normalized URL, and RSS GUID
+        if original_url in history or normalized_url in history or (entry_guid and entry_guid in history):
+            print(f"Skipping already processed item: {entry_title}")
             continue
             
         print(f"\nProcessing Lifehacker story: {entry_title}")
@@ -216,9 +221,15 @@ def run_pipeline():
             
         success = post_to_wordpress(entry_title, original_url, teaser, featured_media_id=media_id)
         if success:
+            # Save all identifier variations to guarantee no future duplicates
             save_to_history(original_url)
-            print("Successfully published aggregated story!")
+            if normalized_url:
+                save_to_history(normalized_url)
+            if entry_guid:
+                save_to_history(entry_guid)
+                
             processed_count += 1
+            print(f"Successfully published aggregated story ({processed_count}/2)!")
 
 if __name__ == "__main__":
     run_pipeline()
