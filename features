@@ -16,7 +16,7 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
-# Set the target WordPress Category ID for Features / Columnists (e.g., Change 25 to your category ID)
+# Set the target WordPress Category ID for Features / Tourism (e.g., Change 25 to your category ID)
 WP_CATEGORY_ID = 25 
 
 HISTORY_FILE = "published_features_history.txt"
@@ -45,7 +45,8 @@ def fetch_urls_from_private_sheet():
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     
-    sheet_name = "News stories for MAKE"
+    # Target Google Sheet Name
+    sheet_name = "TOURISM for MAKE"
     sheet = client.open(sheet_name).sheet1
     
     urls = []
@@ -58,7 +59,7 @@ def fetch_urls_from_private_sheet():
                 clean_url = cell_clean.split("?")[0]
                 urls.append(clean_url)
                 
-    print(f"=== STEP 1 DEBUG: Found {len(urls)} URLs in Google Sheet ===")
+    print(f"=== STEP 1 DEBUG: Found {len(urls)} URLs in Google Sheet '{sheet_name}' ===")
     return urls
 
 def extract_article_content(url):
@@ -156,7 +157,7 @@ def write_colour_feature_with_gemini(raw_text, target_url):
     - Fields required:
       "title": "An evocative, literary headline suitable for a magazine or feature section"
       "content": "<p>Vivid, narrative opening paragraph setting the scene...</p><p>Exploratory narrative paragraphs detailing the background...</p><h2>Subheading 1</h2><p>Analytical and descriptive commentary...</p><h2>Subheading 2</h2><p>Broader impacts and perspective...</p><p>Reflective concluding paragraph...</p>"
-      "image_query": "2 to 3 evocative English keywords for stock photo search (e.g. 'sri lanka tea planter sunset', 'colombo cityscape night')"
+      "image_query": "2 to 3 evocative English keywords for stock photo search (e.g. 'sri lanka beach resort', 'colombo cityscape sunset')"
 
     Raw Source Material:
     {raw_text[:6000]}
