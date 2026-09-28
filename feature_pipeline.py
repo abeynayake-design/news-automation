@@ -16,20 +16,8 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
-# Set the target WordPress Category ID for Features / Tourism (e.g., Change 25 to your category ID)
+# Set the target WordPress Category ID for Features / Tourism (Category ID 25)
 WP_CATEGORY_ID = 25 
-
-HISTORY_FILE = "published_features_history.txt"
-
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
-    return set()
-
-def save_to_history(entry_id):
-    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{entry_id}\n")
 
 def fetch_urls_from_private_sheet():
     if not GOOGLE_CREDENTIALS:
@@ -45,7 +33,7 @@ def fetch_urls_from_private_sheet():
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     
-    # Target Google Sheet using exact Spreadsheet ID to bypass title lookup errors
+    # Target Google Sheet via exact Spreadsheet ID
     SPREADSHEET_ID = "1prryBCnTg8f3p3EihipqzJdngcKrokjf77sTvbMkIwo"
     sheet = client.open_by_key(SPREADSHEET_ID).sheet1
     
@@ -55,7 +43,6 @@ def fetch_urls_from_private_sheet():
         for cell in row:
             cell_clean = cell.strip()
             if cell_clean.startswith("http://") or cell_clean.startswith("https://"):
-                # Clean tracking parameters
                 clean_url = cell_clean.split("?")[0]
                 urls.append(clean_url)
                 
@@ -163,7 +150,7 @@ def write_colour_feature_with_gemini(raw_text, target_url):
     {raw_text[:6000]}
     """
     
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
     response_text = response.text.strip()
     
     if response_text.startswith("```json"):
@@ -199,7 +186,6 @@ def post_to_wordpress(title, content_html, featured_media_id=None):
         return False
 
 def run_feature_pipeline():
-    history = load_history()
     urls = fetch_urls_from_private_sheet()
     
     if not urls:
@@ -211,16 +197,12 @@ def run_feature_pipeline():
         if processed_count >= 5:
             print("Batch target limit of 5 feature stories reached.")
             break
-            
-        if url in history:
-            print(f"=== DEBUG: Skipping already processed URL: {url} ===")
-            continue
 
         print(f"\nProcessing Feature URL ({processed_count + 1}/5): {url}")
         raw_text = extract_article_content(url)
         
         if not raw_text or len(raw_text) < 100:
-            print(f"=== STEP 2 WARNING: Insufficient text extracted from {url}. Skipping without saving. ===")
+            print(f"=== STEP 2 WARNING: Insufficient text extracted from {url}. Skipping. ===")
             continue
 
         try:
@@ -236,7 +218,6 @@ def run_feature_pipeline():
 
         print(f"=== STEP 3 DEBUG: Attempting WordPress post for '{article_data['title']}' ===")
         if post_to_wordpress(article_data["title"], article_data["content"], featured_media_id=media_id):
-            save_to_history(url)
             processed_count += 1
             print(f"=== STEP 3 SUCCESS: Published feature {processed_count}/5 ('{article_data['title']}') to WordPress! ===")
 
