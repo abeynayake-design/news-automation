@@ -45,9 +45,9 @@ def fetch_urls_from_private_sheet():
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     
-    # Target Google Sheet Name
-    sheet_name = "TOURISM for MAKE"
-    sheet = client.open(sheet_name).sheet1
+    # Target Google Sheet using exact Spreadsheet ID to bypass title lookup errors
+    SPREADSHEET_ID = "1prryBCnTg8f3p3EihipqzJdngcKrokjf77sTvbMkIwo"
+    sheet = client.open_by_key(SPREADSHEET_ID).sheet1
     
     urls = []
     rows = sheet.get_all_values()
@@ -59,7 +59,7 @@ def fetch_urls_from_private_sheet():
                 clean_url = cell_clean.split("?")[0]
                 urls.append(clean_url)
                 
-    print(f"=== STEP 1 DEBUG: Found {len(urls)} URLs in Google Sheet '{sheet_name}' ===")
+    print(f"=== STEP 1 DEBUG: Found {len(urls)} URLs in Google Sheet ID '{SPREADSHEET_ID}' ===")
     return urls
 
 def extract_article_content(url):
