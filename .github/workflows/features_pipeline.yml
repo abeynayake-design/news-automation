@@ -1,12 +1,10 @@
 name: Process Tourism Feature Pipeline
 
 on:
-  schedule:
-    - cron: '0 */3 * * *'
-  workflow_dispatch:
+  workflow_dispatch: # Manual trigger from Actions tab
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   run-feature-pipeline:
@@ -36,10 +34,3 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python feature_pipeline.py
-
-      - name: Commit & Push History Updates
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add published_features_history.txt
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update published features history [skip ci]" && git push)
