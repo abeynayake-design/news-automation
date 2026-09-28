@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import random
 import requests
 import feedparser
 from google import genai
@@ -29,25 +30,38 @@ def save_to_history(entry_url):
         f.write(f"{entry_url}\n")
 
 def get_pexels_image_url(search_query):
-    """Searches Pexels for a relevant landscape stock photo."""
+    """
+    Searches Pexels for relevant landscape stock photos.
+    Fetches up to 5 results and picks one randomly to avoid duplicate images.
+    """
     if not PEXELS_API_KEY:
         print("Missing PEXELS_API_KEY secret. Skipping Pexels image lookup.")
         return None
 
     try:
         headers = {"Authorization": PEXELS_API_KEY}
-        url = f"https://api.pexels.com/v1/search?query={search_query}&per_page=1&orientation=landscape"
+        # Fetch top 5 photos instead of 1 to allow selection diversity
+        url = f"https://api.pexels.com/v1/search?query={search_query}&per_page=5&orientation=landscape"
         res = requests.get(url, headers=headers, timeout=10)
         
         if res.status_code == 200:
             data = res.json()
             photos = data.get("photos", [])
             if photos:
-                image_url = photos[0]["src"]["large"]
+                # Randomly pick from the top results to avoid repetition
+                selected_photo = random.choice(photos)
+                image_url = selected_photo["src"]["large"]
                 print(f"Pexels image found for '{search_query}': {image_url}")
                 return image_url
             else:
-                print(f"No Pexels photos found for query: '{search_query}'")
+                print(f"No Pexels photos found for query: '{search_query}'. Trying fallback...")
+                # Fallback search if specific query yields 0 results
+                fallback_url = f"https://api.pexels.com/v1/search?query=workspace productivity&per_page=5&orientation=landscape"
+                fallback_res = requests.get(fallback_url, headers=headers, timeout=10)
+                if fallback_res.status_code == 200:
+                    fallback_photos = fallback_res.json().get("photos", [])
+                    if fallback_photos:
+                        return random.choice(fallback_photos)["src"]["large"]
         else:
             print(f"Pexels API error. Status: {res.status_code}, Response: {res.text}")
     except Exception as e:
@@ -85,7 +99,10 @@ def upload_image_to_wordpress(image_url):
     return None
 
 def generate_teaser_and_image_prompt(original_title, original_summary):
-    """Uses Gemini to generate an engaging short teaser and Pexels search keywords."""
+    """
+    Uses Gemini to generate an engaging short teaser and highly specific, 
+    visually descriptive Pexels search terms (adapted from Make.com prompt logic).
+    """
     client = genai.Client(api_key=GEMINI_API_KEY.strip())
     
     prompt = f"""
@@ -94,19 +111,20 @@ def generate_teaser_and_image_prompt(original_title, original_summary):
     Article Title: {original_title}
     Article Summary: {original_summary[:1500]}
     
-    Task:
-    1. Write a short, captivating 2-sentence teaser summary to introduce this Lifehacker article.
-    2. Provide 2 to 3 English search keywords for finding a high-quality stock photo on Pexels (e.g. "laptop productivity", "cooking tips", "smart phone").
+    Tasks:
+    1. TEASER: Write a short, captivating 2-sentence teaser summary to introduce this Lifehacker article.
+    2. IMAGE KEYWORDS: You are a search optimization assistant. Read the headline and summary and STRICTLY IGNORE broad terms like "technology", "productivity", "lifehacker", "tips", or "laptop". 
+       Identify the most unique specific object, action, or subject in the text. Provide exactly TWO words that are visually descriptive for stock photos (e.g., if the story is about cooking hacks, use "kitchen spices"; if about saving money, use "piggy bank"; if about phone battery, use "charging cable").
 
     Return ONLY a raw JSON object without markdown tags:
     {{
       "teaser": "Engaging two-sentence intro...",
-      "image_query": "2 to 3 search keywords"
+      "image_query": "two specific keywords"
     }}
     """
     
     response = client.models.generate_content(
-        model="gemini-3.6-flash",
+        model="gemini-3.8-flash",
         contents=prompt,
     )
     
@@ -186,11 +204,11 @@ def run_pipeline():
         try:
             ai_data = generate_teaser_and_image_prompt(entry_title, summary)
             teaser = ai_data.get("teaser", summary[:200])
-            image_query = ai_data.get("image_query", "lifehacker technology")
+            image_query = ai_data.get("image_query", "desk setup")
         except Exception as e:
             print(f"Gemini processing error: {e}")
             teaser = summary[:200]
-            image_query = "technology productivity"
+            image_query = "desk setup"
 
         # Pexels photo lookup & WordPress media upload
         image_url = get_pexels_image_url(image_query)
@@ -200,9 +218,7 @@ def run_pipeline():
         if success:
             save_to_history(original_url)
             print("Successfully published aggregated story!")
-            break 
-            
-        processed_count += 1
+            processed_count += 1
 
 if __name__ == "__main__":
     run_pipeline()
