@@ -34,14 +34,20 @@ def fetch_urls_from_private_sheet():
         return []
         
     creds_dict = json.loads(GOOGLE_CREDENTIALS)
+    
+    # Sanitize private key formatting (handles escaped newlines \n cleanly)
+    if "private_key" in creds_dict and "\\n" in creds_dict["private_key"]:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
     scopes = [
-        "[https://www.googleapis.com/auth/spreadsheets.readonly](https://www.googleapis.com/auth/spreadsheets.readonly)",
-        "[https://www.googleapis.com/auth/drive.readonly](https://www.googleapis.com/auth/drive.readonly)"
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive.readonly"
     ]
     
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     
+    # Use direct sheet opening by key if available or exact sheet name
     sheet_name = "News stories for MAKE"
     sheet = client.open(sheet_name).sheet1
     
@@ -98,7 +104,7 @@ def get_pexels_image_url(search_query):
         return None
     try:
         headers = {"Authorization": PEXELS_API_KEY}
-        url = f"[https://api.pexels.com/v1/search?query=](https://api.pexels.com/v1/search?query=){search_query}&per_page=1&orientation=landscape"
+        url = f"https://api.pexels.com/v1/search?query={search_query}&per_page=1&orientation=landscape"
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             photos = res.json().get("photos", [])
@@ -172,7 +178,7 @@ def post_to_wordpress(title, content_html, featured_media_id=None):
         "title": title, 
         "content": content_html, 
         "status": "publish",
-        "categories": [18]  # Category 18
+        "categories": [18]
     }
     if featured_media_id:
         body["featured_media"] = featured_media_id
