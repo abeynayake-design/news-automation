@@ -250,11 +250,11 @@ def rewrite_with_gemini(raw_text, original_title):
     2. ZERO HALLUCINATIONS OR INVENTED NAMES:
        - Rely strictly on the facts provided in the raw text below.
        - NEVER invent, guess, or insert names, titles, former officials, or unverified background details (e.g. do not guess the Speaker of Parliament or invent historical figures).
-    3. COMPLETE ENTITY INTEGRATION & RICH NARRATIVE:
-       - Include every specific name, expert, location, figure, date, and detail provided in the source text (e.g. if a name like "Ansley de Silva" appears, it MUST be featured in the narrative).
-       - Do NOT make the article brief, dry, or juvenile. Weave a full, fluid, professional news story (3 to 5 well-developed paragraphs) covering the background, context, implications, and key parameters (Who, What, When, Where, Why).
-    4. HISTORICAL CONTENT FILTER:
-       - If the raw text is clearly an old historical story from past years (e.g., elections from 2015 or old events), output EXACTLY:
+    3. 3. COMPLETE ENTITY INTEGRATION & RICH NARRATIVE:
+
+       - Include every specific name, expert, location, figure, date, and detail provided in the source text (e.g. if a name like "Ansley de Silva" appears, it MUST be featured in the narrative). Please provide the proper context. Context is very important. If a Sri Lankan policy is unveiled, STATE always the context i.e put down which State entity is responsible for these changes. If Johnston Fernando is being indicted say Jonhnston Fernando is being indicted; both names and title not just one name, Johnston only. Get these details from the original story. Pl give all context such as WHERE exactly something is happening, i.e town name. 
+       - Do NOT make the article brief, dry, or juvenile. Weave a full, fluid, professional news story (3 to 5 well-developed paragraphs) covering the background, context, implications, and key parameters (Who, What, When, Where, Why). 
+       4. - If the raw text is clearly an old historical story from past years (e.g., elections from 2015 or old events), output EXACTLY:
          {{"title": "SERVER ERROR", "content": "SERVER ERROR", "image_query": "none"}}
 
     FORMATTING REQUIREMENTS:
