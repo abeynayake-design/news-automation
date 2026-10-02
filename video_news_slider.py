@@ -4,7 +4,10 @@ import json
 import base64
 import requests
 import feedparser
+from google import genai
 
+# Configuration from GitHub Secrets
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WP_URL = os.getenv("WP_URL")
 WP_USER = os.getenv("WP_USER")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
@@ -21,11 +24,11 @@ def extract_youtube_id(url_or_guid_or_text):
             return match.group(1)
     return None
 
-def is_already_published_in_wp(video_id):
-    """Fetches Category 32 posts and checks content/excerpt/title for video_id."""
+def fetch_recent_wp_video_posts():
+    """Fetches titles and Video IDs of recent Category 32 posts for deduplication checks."""
     if not WP_URL or not WP_USER or not WP_APP_PASSWORD:
         print("CRITICAL: Missing WordPress credentials in environment variables!")
-        return True # BLOCK POSTING
+        return []
 
     api_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
@@ -43,26 +46,97 @@ def is_already_published_in_wp(video_id):
     try:
         res = requests.get(api_endpoint, headers=headers, params=params, timeout=12)
         if res.status_code == 200:
-            posts = res.json()
-            for post in posts:
-                post_id = post.get("id")
-                title = post.get("title", {}).get("rendered", "")
-                content = post.get("content", {}).get("rendered", "")
-                excerpt = post.get("excerpt", {}).get("rendered", "")
-                
-                if video_id in content or video_id in excerpt or video_id in title:
-                    print(f"==> MATCH FOUND! Video ID '{video_id}' exists in WP Post ID {post_id} ('{title}').")
-                    return True # BLOCK POSTING
-            
-            print(f"==> NO MATCH FOUND for Video ID '{video_id}'. Safe to publish.")
-            return False # SAFE TO POST
+            return res.json()
         else:
             print(f"CRITICAL ERROR: WP API returned status {res.status_code}.")
-            return True # BLOCK POSTING
-            
+            return []
     except Exception as e:
         print(f"CRITICAL EXCEPTION connecting to WP: {e}")
-        return True # BLOCK POSTING
+        return []
+
+def is_video_id_published(video_id, recent_posts):
+    """Tier 1 Check: Checks if exact video_id exists in WP content/excerpt/title."""
+    for post in recent_posts:
+        post_id = post.get("id")
+        title = post.get("title", {}).get("rendered", "")
+        content = post.get("content", {}).get("rendered", "")
+        excerpt = post.get("excerpt", {}).get("rendered", "")
+        
+        if video_id in content or video_id in excerpt or video_id in title:
+            print(f"==> MATCH FOUND! Video ID '{video_id}' exists in WP Post ID {post_id} ('{title}').")
+            return True
+    return False
+
+def is_semantic_duplicate_story(incoming_title, recent_posts):
+    """
+    Tier 2 Check: Uses Gemini-3.8-flash to evaluate whether the incoming title covers 
+    the exact same specific news event/speech as any existing recent post, 
+    even if uploaded by different outlets or with slightly different wording.
+    """
+    if not GEMINI_API_KEY:
+        print("WARNING: GEMINI_API_KEY not found. Skipping semantic check.")
+        return False
+
+    # Extract existing post titles
+    existing_titles = [post.get("title", {}).get("rendered", "") for post in recent_posts if post.get("title", {}).get("rendered", "")]
+    
+    if not existing_titles:
+        return False
+
+    client = genai.Client(api_key=GEMINI_API_KEY.strip())
+
+    prompt = f"""
+    You are a senior news editor evaluating video headlines for an automated news portal.
+
+    INCOMING NEW VIDEO HEADLINE:
+    "{incoming_title}"
+
+    RECENTLY PUBLISHED VIDEO HEADLINES ON THE SITE:
+    {json.dumps(existing_titles, indent=2)}
+
+    TASK:
+    Determine if the INCOMING video headline covers the EXACT SAME underlying news event, press conference, or speech as any item in the recently published list (e.g. two different TV channels uploading the same speech at the UN, or two clips of the exact same press conference).
+
+    CRITICAL EDITORIAL RULES:
+    1. Flag as DUPLICATE (True) ONLY if both headlines refer to the exact same specific speech, press conference, or single real-world event.
+    2. Do NOT flag as duplicate (False) if they are two distinct stories, even if they share broad keywords (e.g., "Foreign Minister talks on Trade" vs. "Foreign Minister talks on Border Security" are DIFFERENT stories and must NOT be blocked).
+
+    Return ONLY a raw JSON object without markdown formatting:
+    {{
+      "is_duplicate": true or false,
+      "matched_title": "Title of matched existing post if duplicate, else null",
+      "reason": "Brief one-sentence explanation"
+    }}
+    """
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt
+        )
+        
+        response_text = response.text.strip()
+        if response_text.startswith("```json"):
+            response_text = response_text[7:-3].strip()
+        elif response_text.startswith("```"):
+            response_text = response_text[3:-3].strip()
+            
+        data = json.loads(response_text)
+        is_dup = data.get("is_duplicate", False)
+        
+        if is_dup:
+            print(f"==> SEMANTIC DUPLICATE BLOCKED!")
+            print(f"    Incoming: '{incoming_title}'")
+            print(f"    Matches Existing: '{data.get('matched_title')}'")
+            print(f"    Reason: {data.get('reason')}")
+            return True
+        else:
+            print(f"==> SEMANTIC CHECK PASSED: '{incoming_title}' is a distinct story.")
+            return False
+
+    except Exception as e:
+        print(f"Semantic check exception: {e}. Defaulting to safe (False).")
+        return False
 
 def get_youtube_thumbnail_url(video_id):
     maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
@@ -89,7 +163,6 @@ def upload_thumbnail_to_wordpress(image_url, video_id):
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Type": img_res.headers.get("Content-Type", "image/jpeg")
             }
-            # FIXED: Sending actual downloaded image bytes
             upload_res = requests.post(media_endpoint, headers=media_headers, data=img_res.content, timeout=15)
             if upload_res.status_code in [200, 201]:
                 media_id = upload_res.json().get("id")
@@ -148,6 +221,9 @@ def run_video_pipeline():
         print(f"Exception fetching feed: {e}")
         return
 
+    # Fetch existing posts once for comparison
+    recent_posts = fetch_recent_wp_video_posts()
+
     for entry in feed.entries:
         video_url = getattr(entry, 'link', '')
         entry_title = getattr(entry, 'title', '')
@@ -159,8 +235,14 @@ def run_video_pipeline():
         if not video_id:
             continue
 
-        if is_already_published_in_wp(video_id):
-            print(f"SKIPPING: '{entry_title}' ({video_id}) is already published on WP.")
+        # Tier 1 Check: Exact Video ID
+        if is_video_id_published(video_id, recent_posts):
+            print(f"SKIPPING: Video ID '{video_id}' is already published on WP.")
+            continue
+
+        # Tier 2 Check: Gemini Semantic Event Deduplication
+        if is_semantic_duplicate_story(entry_title, recent_posts):
+            print(f"SKIPPING: Story '{entry_title}' is semantically duplicate.")
             continue
 
         print(f"POSTING NEW VIDEO: {entry_title} ({video_id})")
